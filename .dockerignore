@@ -1,0 +1,51 @@
+# Node modules (will be installed during build)
+node_modules
+npm-debug.log*
+
+# Build outputs (will be generated)
+build/
+.svelte-kit/
+
+# Development files
+.git/
+.gitignore
+README.md
+*.md
+
+# Environment files
+.env*
+
+# IDE files
+.vscode/
+.idea/
+*.swp
+*.swo
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Logs
+logs/
+*.log
+
+# Python cache
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.Python
+
+# Development tools
+.eslintrc*
+.prettierrc*
+dev.sh
+build.sh
+
+# Docker files (don't copy into container)
+Dockerfile*
+docker-compose*
+
+# Cache directories
+.cache/
+.npm/
