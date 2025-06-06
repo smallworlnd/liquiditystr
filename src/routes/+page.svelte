@@ -1,7 +1,7 @@
 <script>
 	import { onMount } from 'svelte';
 	import { writable } from 'svelte/store';
-	import { Zap, RefreshCw, Send, Clock, CheckCircle, AlertCircle, Copy, QrCode, Github, ChevronDown, HelpCircle } from 'lucide-svelte';
+	import { Zap, RefreshCw, Send, Clock, CheckCircle, AlertCircle, Copy, QrCode, Github, ChevronDown, ChevronUp, HelpCircle } from 'lucide-svelte';
 	import QRCode from 'qrcode';
 	import { browser } from '$app/environment';
 	
@@ -71,6 +71,11 @@
 	// Popover state
 	let showOutboundPopover = false;
 	let showAdPopovers = {};
+
+	// Sorting state
+	let sortColumn = '';
+	let sortDirection = 'asc'; // 'asc' or 'desc'
+	let sortedAds = []; // Computed from adsList
 
 	// API base URL - same origin since frontend and backend are in same container
 	let API_BASE = '/api';
@@ -520,10 +525,10 @@
 	function formatCapacity(amount) {
 		const millions = amount / 1000000;
 		if (millions >= 1) {
-			return `${millions.toFixed(2)} M`;
+			return `${millions.toFixed(2)}`;
 		} else {
 			// For values less than 1M, still show in M but with more decimals if needed
-			return `${millions.toFixed(3)} M`;
+			return `${millions.toFixed(3)}`;
 		}
 	}
 
@@ -725,6 +730,70 @@
 		showAdPopovers[key] = !showAdPopovers[key];
 		showAdPopovers = { ...showAdPopovers }; // Trigger reactivity
 	}
+
+	function sortAds(column) {
+		if (sortColumn === column) {
+			// If clicking the same column, reverse direction
+			sortDirection = sortDirection === 'asc' ? 'desc' : 'asc';
+		} else {
+			// New column, default to ascending
+			sortColumn = column;
+			sortDirection = 'asc';
+		}
+	}
+
+	function getSortValue(ad, column) {
+		switch (column) {
+			case 'lsp_alias':
+				return (ad.lsp_alias || 'Unknown LSP').toLowerCase();
+			case 'capacity_min':
+				return ad.min_channel_balance_sat || 0;
+			case 'capacity_max':
+				return ad.max_channel_balance_sat || 0;
+			case 'max_lease_time':
+				return ad.max_channel_expiry_blocks || 0;
+			case 'fixed_cost':
+				return ad.fixed_cost_sats || 0;
+			case 'variable_cost':
+				return ad.variable_cost_ppm || 0;
+			case 'max_base_fee':
+				return ad.max_promised_base_fee || 0;
+			case 'max_fee_rate':
+				return ad.max_promised_fee_rate || 0;
+			case 'min_apr':
+				return ad.min_apr || 0;
+			case 'max_apr':
+				return ad.max_apr || 0;
+			case 'median_outbound_ppm':
+				return ad.median_outbound_ppm || 0;
+			case 'median_inbound_ppm':
+				return ad.median_inbound_ppm || 0;
+			case 'num_channels':
+				return ad.num_channels || 0;
+			case 'total_capacity':
+				return ad.total_capacity || 0;
+			default:
+				return 0;
+		}
+	}
+
+	// Reactive statement to sort ads when adsList or sort parameters change
+	$: {
+		if (sortColumn && adsList.length > 0) {
+			sortedAds = [...adsList].sort((a, b) => {
+				const aVal = getSortValue(a, sortColumn);
+				const bVal = getSortValue(b, sortColumn);
+				
+				let comparison = 0;
+				if (aVal < bVal) comparison = -1;
+				else if (aVal > bVal) comparison = 1;
+				
+				return sortDirection === 'asc' ? comparison : -comparison;
+			});
+		} else {
+			sortedAds = [...adsList];
+		}
+	}
 </script>
 
 <svelte:head>
@@ -851,7 +920,7 @@
 				<button 
 					on:click={loadAds}
 					disabled={isLoading}
-					class="flex items-center gap-2 px-3 py-1.5 bg-background border rounded-md hover:bg-accent transition-colors disabled:opacity-50">
+					class="flex items-center text-sm gap-2 px-1 py-1 bg-background border rounded-md hover:bg-accent transition-colors disabled:opacity-50">
 					<RefreshCw class="h-4 w-4 {isLoading ? 'animate-spin' : ''}" />
 					Refresh
 				</button>
@@ -867,210 +936,640 @@
 					<p class="text-muted-foreground">No LSP advertisements found.</p>
 				</div>
 			{:else}
-				<div class="grid gap-4">
-					{#each adsList as ad}
-						<div class="border rounded-lg p-4 hover:bg-accent/50 transition-colors">
-							<div class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4">
-								<div class="flex-1">
-									<div class="flex items-center gap-2 mb-3">
-										<h3 class="font-medium">{ad.lsp_alias || 'Unknown LSP'}</h3>
-										<button 
-											on:click={() => copyToClipboard(ad.lsp_pubkey, `lsp_pubkey_${ad.d}`)}
-											class="p-0.5 hover:bg-gray-500/20 rounded transition-colors relative"
-											title="Copy LSP pubkey to clipboard">
-											<Copy class="h-3 w-3" />
-											{#if copiedTooltips[`lsp_pubkey_${ad.d}`]}
-												<div class="absolute -top-8 left-1/2 transform -translate-x-1/2 bg-gray-900 text-white text-xs px-2 py-1 rounded whitespace-nowrap z-10 animate-in fade-in duration-200">
-													Copied LSP pubkey!
+				<!-- Sortable Table Layout -->
+				<div class="overflow-x-auto rounded-lg border border-border">
+					<table class="w-full border-collapse">
+						<!-- Super Header Row for Column Groups -->
+						<thead class="bg-muted/50">
+							<tr>
+								<!-- LSP Column - No text for single column -->
+								<th class="text-center p-2 border-b border-border/40 font-semibold text-xs text-muted-foreground">
+									<span>&nbsp;</span>
+								</th>
+								
+								<!-- Channel & Time Group -->
+								<th colspan="3" class="text-center p-2 border-b border-l border-border/40 font-semibold text-xs text-muted-foreground">
+										<div class="relative">
+                      <span>Capacity & Duration</span>
+											<button
+												type="button"
+												on:click={() => toggleAdPopover('header', 'capacity_duration')}
+												class="p-1 hover:bg-accent rounded-full transition-colors"
+												title="Channel capacity info"
+											>
+												<HelpCircle class="h-3 w-3 text-muted-foreground" />
+											</button>
+											{#if showAdPopovers['header-capacity_duration']}
+												<!-- svelte-ignore a11y-click-events-have-key-events -->
+												<!-- svelte-ignore a11y-no-static-element-interactions -->
+												<div 
+													class="fixed inset-0 z-40" 
+													on:click={() => toggleAdPopover('header', 'capacity_duration')}
+												></div>
+												<div class="absolute left-0 top-8 z-50 w-64 bg-background border border-border rounded-lg shadow-lg p-3 text-xs">
+													<p class="font-medium mb-1">Capacity & Duration</p>
+													<p class="text-muted-foreground">The minimum and maximum channel size (in sats) that this LSP will open for you, and the maximum lease duration for the channel. The sum of the inbound and outbound sats must fit within this range. <strong>Channels may stay open longer than the lease period, depending on the LSP</strong>.</p>
 												</div>
 											{/if}
-										</button>
-										{#if ad.value_prop}
-											<span class="bg-primary/10 text-primary px-2 py-0.5 rounded text-xs">
-												{ad.value_prop}
-											</span>
-										{/if}
-									</div>
-									
-									<!-- Responsive grid layout -->
-									<div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
-										<!-- Channel Capacity -->
-										<div class="text-center">
-											<div class="font-medium text-sm">
-												{formatCapacity(ad.min_channel_balance_sat)} - {formatCapacity(ad.max_channel_balance_sat)}
-											</div>
-											<div class="flex items-center justify-center gap-1">
-												<span class="text-xs text-muted-foreground">Capacity</span>
-												<div class="relative">
-													<button
-														type="button"
-														on:click={() => toggleAdPopover(ad.d, 'capacity')}
-														class="p-0.5 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-full transition-colors"
-														title="Channel capacity info"
-													>
-														<HelpCircle class="h-3 w-3 text-muted-foreground" />
-													</button>
-													{#if showAdPopovers[`${ad.d}-capacity`]}
-														<!-- svelte-ignore a11y-click-events-have-key-events -->
-														<!-- svelte-ignore a11y-no-static-element-interactions -->
-														<div 
-															class="fixed inset-0 z-40" 
-															on:click={() => toggleAdPopover(ad.d, 'capacity')}
-														></div>
-														<div class="absolute left-0 top-6 z-50 w-64 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg p-3 text-xs text-gray-600 dark:text-gray-300">
-															<p class="font-medium text-gray-900 dark:text-gray-100 mb-1">Channel Capacity Range</p>
-															<p>The minimum and maximum channel size (in sats) that this LSP will open for you. The sum of the inbound and outbound sats must fit within this range.</p>
-														</div>
-													{/if}
-												</div>
-											</div>
 										</div>
-
-										<!-- Fixed Cost -->
-										<div class="text-center">
-											<div class="font-medium text-sm">
-												{formatBigNum(ad.fixed_cost_sats)} sat
-											</div>
-											<div class="flex items-center justify-center gap-1">
-												<span class="text-xs text-muted-foreground">Fixed Cost</span>
-												<div class="relative">
-													<button
-														type="button"
-														on:click={() => toggleAdPopover(ad.d, 'fixed')}
-														class="p-0.5 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-full transition-colors"
-														title="Fixed cost info"
-													>
-														<HelpCircle class="h-3 w-3 text-muted-foreground" />
-													</button>
-													{#if showAdPopovers[`${ad.d}-fixed`]}
-														<!-- svelte-ignore a11y-click-events-have-key-events -->
-														<!-- svelte-ignore a11y-no-static-element-interactions -->
-														<div 
-															class="fixed inset-0 z-40" 
-															on:click={() => toggleAdPopover(ad.d, 'fixed')}
-														></div>
-														<div class="absolute left-0 top-6 z-50 w-64 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg p-3 text-xs text-gray-600 dark:text-gray-300">
-															<p class="font-medium text-gray-900 dark:text-gray-100 mb-1">Fixed Opening Cost</p>
-															<p>A flat fee charged by the LSP for opening the channel, regardless of channel size.</p>
-														</div>
-													{/if}
-												</div>
-											</div>
-										</div>
-
-										<!-- Variable Cost -->
-										<div class="text-center">
-											<div class="font-medium text-sm">
-												{formatBigNum(ad.variable_cost_ppm)} ppm
-											</div>
-											<div class="flex items-center justify-center gap-1">
-												<span class="text-xs text-muted-foreground">Variable Cost</span>
-												<div class="relative">
-													<button
-														type="button"
-														on:click={() => toggleAdPopover(ad.d, 'variable')}
-														class="p-0.5 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-full transition-colors"
-														title="Variable cost info"
-													>
-														<HelpCircle class="h-3 w-3 text-muted-foreground" />
-													</button>
-													{#if showAdPopovers[`${ad.d}-variable`]}
-														<!-- svelte-ignore a11y-click-events-have-key-events -->
-														<!-- svelte-ignore a11y-no-static-element-interactions -->
-														<div 
-															class="fixed inset-0 z-40" 
-															on:click={() => toggleAdPopover(ad.d, 'variable')}
-														></div>
-														<div class="absolute left-0 top-6 z-50 w-64 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg p-3 text-xs text-gray-600 dark:text-gray-300">
-															<p class="font-medium text-gray-900 dark:text-gray-100 mb-1">Variable Opening Cost</p>
-															<p>A proportional fee (parts per million) based on the channel capacity. Larger channels cost more.</p>
-														</div>
-													{/if}
-												</div>
-											</div>
-										</div>
-
-										<!-- Max Base Fee -->
-										{#if ad.max_promised_base_fee !== undefined}
-											<div class="text-center">
-												<div class="font-medium text-sm">
-													{formatBigNum(ad.max_promised_base_fee)} sat
-												</div>
-												<div class="flex items-center justify-center gap-1">
-													<span class="text-xs text-muted-foreground">Max Base Fee</span>
-													<div class="relative">
-														<button
-															type="button"
-															on:click={() => toggleAdPopover(ad.d, 'basefee')}
-															class="p-0.5 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-full transition-colors"
-															title="Max base fee info"
-														>
-															<HelpCircle class="h-3 w-3 text-muted-foreground" />
-														</button>
-														{#if showAdPopovers[`${ad.d}-basefee`]}
-															<!-- svelte-ignore a11y-click-events-have-key-events -->
-															<!-- svelte-ignore a11y-no-static-element-interactions -->
-															<div 
-																class="fixed inset-0 z-40" 
-																on:click={() => toggleAdPopover(ad.d, 'basefee')}
-															></div>
-															<div class="absolute left-0 top-6 z-50 w-64 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg p-3 text-xs text-gray-600 dark:text-gray-300">
-																<p class="font-medium text-gray-900 dark:text-gray-100 mb-1">Maximum Promised Base Fee</p>
-																<p>The maximum base fee the LSP promises to charge for routing payments through this channel.</p>
-															</div>
-														{/if}
-													</div>
-												</div>
-											</div>
-										{/if}
-
-										<!-- Max Fee Rate -->
-										{#if ad.max_promised_fee_rate !== undefined}
-											<div class="text-center">
-												<div class="font-medium text-sm">
-													{formatBigNum(ad.max_promised_fee_rate)} ppm
-												</div>
-												<div class="flex items-center justify-center gap-1">
-													<span class="text-xs text-muted-foreground">Max Fee Rate</span>
-													<div class="relative">
-														<button
-															type="button"
-															on:click={() => toggleAdPopover(ad.d, 'feerate')}
-															class="p-0.5 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-full transition-colors"
-															title="Max fee rate info"
-														>
-															<HelpCircle class="h-3 w-3 text-muted-foreground" />
-														</button>
-														{#if showAdPopovers[`${ad.d}-feerate`]}
-															<!-- svelte-ignore a11y-click-events-have-key-events -->
-															<!-- svelte-ignore a11y-no-static-element-interactions -->
-															<div 
-																class="fixed inset-0 z-40" 
-																on:click={() => toggleAdPopover(ad.d, 'feerate')}
-															></div>
-															<div class="absolute left-0 top-6 z-50 w-64 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg p-3 text-xs text-gray-600 dark:text-gray-300">
-																<p class="font-medium text-gray-900 dark:text-gray-100 mb-1">Maximum Promised Fee Rate</p>
-																<p>The maximum proportional fee rate (parts per million) the LSP promises to charge for routing payments through this channel.</p>
-															</div>
-														{/if}
-													</div>
-												</div>
-											</div>
-										{/if}
-									</div>
-								</div>
+								</th>
 								
-								<!-- Select Button - positioned at bottom for mobile, side for desktop -->
-								<div class="flex justify-center lg:justify-end">
+								<!-- Costs Group -->
+								<th colspan="4" class="text-center p-2 border-b border-l border-border/40 font-semibold text-xs text-muted-foreground">
+										<div class="relative">
+                      <span>Channel Costs</span>
+											<button
+												type="button"
+												on:click={() => toggleAdPopover('header', 'costs')}
+												class="p-1 hover:bg-accent rounded-full transition-colors"
+												title="Channel cost info"
+											>
+												<HelpCircle class="h-3 w-3 text-muted-foreground" />
+											</button>
+											{#if showAdPopovers['header-costs']}
+												<!-- svelte-ignore a11y-click-events-have-key-events -->
+												<!-- svelte-ignore a11y-no-static-element-interactions -->
+												<div 
+													class="fixed inset-0 z-40" 
+													on:click={() => toggleAdPopover('header', 'costs')}
+												></div>
+												<div class="absolute left-0 top-8 z-50 w-64 bg-background border border-border rounded-lg shadow-lg p-3 text-xs">
+													<p class="font-medium mb-1">Channel Costs</p>
+													<p class="text-muted-foreground">Channel price is determined by the variable cost in ppm of the desired capacity, the flat fee regardless of capacity, and the desired lease duration. The Min & Max APR% values are expected rates if you purchased a channel with the LSP's Min & Max capacity, respectively, for the maximum lease duration.</p>
+												</div>
+											{/if}
+										</div>
+								</th>
+								
+								<!-- routing fees group -->
+								<th colspan="2" class="text-center p-2 border-b border-l border-border/40 font-semibold text-xs text-muted-foreground">
+										<div class="relative">
+                      <span>Channel Policies</span>
+											<button
+												type="button"
+												on:click={() => toggleAdPopover('header', 'fees')}
+												class="p-1 hover:bg-accent rounded-full transition-colors"
+												title="Channel routing policies"
+											>
+												<HelpCircle class="h-3 w-3 text-muted-foreground" />
+											</button>
+											{#if showAdPopovers['header-fees']}
+												<!-- svelte-ignore a11y-click-events-have-key-events -->
+												<!-- svelte-ignore a11y-no-static-element-interactions -->
+												<div 
+													class="fixed inset-0 z-40" 
+													on:click={() => toggleAdPopover('header', 'fees')}
+												></div>
+												<div class="absolute left-0 top-8 z-50 w-64 bg-background border border-border rounded-lg shadow-lg p-3 text-xs">
+													<p class="font-medium mb-1">Payment routing policies</p>
+													<p class="text-muted-foreground">The LSP promises to charge no more than the listed base fee and variable fee for payments routed through this channel.</p>
+												</div>
+											{/if}
+										</div>
+								</th>
+
+								<!-- node info group -->
+								<th colspan="4" class="text-center p-2 border-b border-l border-border/40 font-semibold text-xs text-muted-foreground">
+										<div class="relative">
+                      <span>Node Info</span>
+											<button
+												type="button"
+												on:click={() => toggleAdPopover('header', 'node_info')}
+												class="p-1 hover:bg-accent rounded-full transition-colors"
+												title="Node info"
+											>
+												<HelpCircle class="h-3 w-3 text-muted-foreground" />
+											</button>
+											{#if showAdPopovers['header-node_info']}
+												<!-- svelte-ignore a11y-click-events-have-key-events -->
+												<!-- svelte-ignore a11y-no-static-element-interactions -->
+												<div 
+													class="fixed inset-0 z-40" 
+													on:click={() => toggleAdPopover('header', 'node_info')}
+												></div>
+												<div class="absolute left-0 top-8 z-50 w-64 bg-background border border-border rounded-lg shadow-lg p-3 text-xs">
+													<p class="font-medium mb-1">Node Info</p>
+													<p class="text-muted-foreground">The LSP's total capacity across all of its channels, along with median inbound and outbound fee rates.</p>
+												</div>
+											{/if}
+										</div>
+								</th>
+							</tr>
+						</thead>
+
+
+						<!-- Main Table Header -->
+						<thead class="bg-muted/30">
+							<tr>
+								<!-- LSP Name Column -->
+								<th class="text-left p-4 border-b border-border font-semibold text-sm">
 									<button 
-										on:click={() => selectAd(ad)}
-										class="px-6 py-2 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors">
-										Select
+										on:click={() => sortAds('lsp_alias')}
+										class="flex items-center gap-2 hover:text-primary transition-colors group">
+										<span class="text-muted-foreground">LSP</span>
+										<div class="flex flex-col h-4 w-3 opacity-60 group-hover:opacity-100">
+											{#if sortColumn === 'lsp_alias' && sortDirection === 'asc'}
+												<ChevronUp class="h-3 w-3 text-primary" />
+											{:else}
+												<ChevronUp class="h-2 w-3 {sortColumn === 'lsp_alias' ? 'opacity-30' : 'opacity-40'}" />
+											{/if}
+											{#if sortColumn === 'lsp_alias' && sortDirection === 'desc'}
+												<ChevronDown class="h-3 w-3 text-primary -mt-1" />
+											{:else}
+												<ChevronDown class="h-2 w-3 {sortColumn === 'lsp_alias' ? 'opacity-30' : 'opacity-40'} -mt-1" />
+											{/if}
+										</div>
 									</button>
-								</div>
-							</div>
-						</div>
-					{/each}
+								</th>
+								
+								<!-- Min Capacity Column -->
+								<th class="text-center p-4 border-b border-l border-border font-semibold text-sm min-w-24">
+									<div class="flex items-center justify-center gap-2">
+										<button 
+											on:click={() => sortAds('capacity_min')}
+											class="flex items-center gap-1 hover:text-primary transition-colors group">
+											<span class="text-muted-foreground text-xs">Min (sat)</span>
+											<div class="flex flex-col h-4 w-3 opacity-60 group-hover:opacity-100">
+												{#if sortColumn === 'capacity_min' && sortDirection === 'asc'}
+													<ChevronUp class="h-3 w-3 text-primary" />
+												{:else}
+													<ChevronUp class="h-2 w-3 {sortColumn === 'capacity_min' ? 'opacity-30' : 'opacity-40'}" />
+												{/if}
+												{#if sortColumn === 'capacity_min' && sortDirection === 'desc'}
+													<ChevronDown class="h-3 w-3 text-primary -mt-1" />
+												{:else}
+													<ChevronDown class="h-2 w-3 {sortColumn === 'capacity_min' ? 'opacity-30' : 'opacity-40'} -mt-1" />
+												{/if}
+											</div>
+										</button>
+									</div>
+								</th>
+
+								<!-- Max Capacity Column -->
+								<th class="text-center p-4 border-b border-border font-semibold text-sm min-w-24">
+									<div class="flex items-center justify-center gap-2">
+										<button 
+											on:click={() => sortAds('capacity_max')}
+											class="flex items-center gap-1 hover:text-primary transition-colors group">
+											<span class="text-muted-foreground text-xs">Max (sat)</span>
+											<div class="flex flex-col h-4 w-3 opacity-60 group-hover:opacity-100">
+												{#if sortColumn === 'capacity_max' && sortDirection === 'asc'}
+													<ChevronUp class="h-3 w-3 text-primary" />
+												{:else}
+													<ChevronUp class="h-2 w-3 {sortColumn === 'capacity_max' ? 'opacity-30' : 'opacity-40'}" />
+												{/if}
+												{#if sortColumn === 'capacity_max' && sortDirection === 'desc'}
+													<ChevronDown class="h-3 w-3 text-primary -mt-1" />
+												{:else}
+													<ChevronDown class="h-2 w-3 {sortColumn === 'capacity_max' ? 'opacity-30' : 'opacity-40'} -mt-1" />
+												{/if}
+											</div>
+										</button>
+									</div>
+								</th>
+								
+								<!-- Max Lease Time Column -->
+								<th class="text-center p-4 border-b border-border font-semibold text-sm min-w-32">
+									<div class="flex items-center justify-center gap-2">
+										<button 
+											on:click={() => sortAds('max_lease_time')}
+											class="flex items-center gap-1 hover:text-primary transition-colors group">
+											<span class="text-muted-foreground text-xs">Max Lease Duration (blocks)</span>
+											<div class="flex flex-col h-4 w-3 opacity-60 group-hover:opacity-100">
+												{#if sortColumn === 'max_lease_time' && sortDirection === 'asc'}
+													<ChevronUp class="h-3 w-3 text-primary" />
+												{:else}
+													<ChevronUp class="h-2 w-3 {sortColumn === 'max_lease_time' ? 'opacity-30' : 'opacity-40'}" />
+												{/if}
+												{#if sortColumn === 'max_lease_time' && sortDirection === 'desc'}
+													<ChevronDown class="h-3 w-3 text-primary -mt-1" />
+												{:else}
+													<ChevronDown class="h-2 w-3 {sortColumn === 'max_lease_time' ? 'opacity-30' : 'opacity-40'} -mt-1" />
+												{/if}
+											</div>
+										</button>
+									</div>
+								</th>
+								
+								<!-- Fixed Cost Column -->
+								<th class="text-center p-4 border-b border-l border-border font-semibold text-sm min-w-28">
+									<div class="flex items-center justify-center gap-2">
+										<button 
+											on:click={() => sortAds('fixed_cost')}
+											class="flex items-center gap-1 hover:text-primary transition-colors group">
+											<span class="text-muted-foreground text-xs">Fixed (sat)</span>
+											<div class="flex flex-col h-4 w-3 opacity-60 group-hover:opacity-100">
+												{#if sortColumn === 'fixed_cost' && sortDirection === 'asc'}
+													<ChevronUp class="h-3 w-3 text-primary" />
+												{:else}
+													<ChevronUp class="h-2 w-3 {sortColumn === 'fixed_cost' ? 'opacity-30' : 'opacity-40'}" />
+												{/if}
+												{#if sortColumn === 'fixed_cost' && sortDirection === 'desc'}
+													<ChevronDown class="h-3 w-3 text-primary -mt-1" />
+												{:else}
+													<ChevronDown class="h-2 w-3 {sortColumn === 'fixed_cost' ? 'opacity-30' : 'opacity-40'} -mt-1" />
+												{/if}
+											</div>
+										</button>
+									</div>
+								</th>
+								
+								<!-- Variable Cost Column -->
+								<th class="text-center p-4 border-b border-border font-semibold text-sm min-w-28">
+									<div class="flex items-center justify-center gap-2">
+										<button 
+											on:click={() => sortAds('variable_cost')}
+											class="flex items-center gap-1 hover:text-primary transition-colors group">
+											<span class="text-muted-foreground text-xs">Variable (ppm)</span>
+											<div class="flex flex-col h-4 w-3 opacity-60 group-hover:opacity-100">
+												{#if sortColumn === 'variable_cost' && sortDirection === 'asc'}
+													<ChevronUp class="h-3 w-3 text-primary" />
+												{:else}
+													<ChevronUp class="h-2 w-3 {sortColumn === 'variable_cost' ? 'opacity-30' : 'opacity-40'}" />
+												{/if}
+												{#if sortColumn === 'variable_cost' && sortDirection === 'desc'}
+													<ChevronDown class="h-3 w-3 text-primary -mt-1" />
+												{:else}
+													<ChevronDown class="h-2 w-3 {sortColumn === 'variable_cost' ? 'opacity-30' : 'opacity-40'} -mt-1" />
+												{/if}
+											</div>
+										</button>
+									</div>
+								</th>
+
+								<!-- Min APR Column -->
+								<th class="text-center p-4 border-b border-border font-semibold text-sm min-w-20">
+									<div class="flex items-center justify-center gap-2">
+										<button 
+											on:click={() => sortAds('min_apr')}
+											class="flex items-center gap-1 hover:text-primary transition-colors group">
+											<span class="text-muted-foreground text-xs">Min APR (%)</span>
+											<div class="flex flex-col h-4 w-3 opacity-60 group-hover:opacity-100">
+												{#if sortColumn === 'min_apr' && sortDirection === 'asc'}
+													<ChevronUp class="h-3 w-3 text-primary" />
+												{:else}
+													<ChevronUp class="h-2 w-3 {sortColumn === 'min_apr' ? 'opacity-30' : 'opacity-40'}" />
+												{/if}
+												{#if sortColumn === 'min_apr' && sortDirection === 'desc'}
+													<ChevronDown class="h-3 w-3 text-primary -mt-1" />
+												{:else}
+													<ChevronDown class="h-2 w-3 {sortColumn === 'min_apr' ? 'opacity-30' : 'opacity-40'} -mt-1" />
+												{/if}
+											</div>
+										</button>
+									</div>
+								</th>
+								
+								<!-- Max APR Column -->
+								<th class="text-center p-4 border-b border-border font-semibold text-sm min-w-20">
+									<div class="flex items-center justify-center gap-2">
+										<button 
+											on:click={() => sortAds('max_apr')}
+											class="flex items-center gap-1 hover:text-primary transition-colors group">
+											<span class="text-muted-foreground text-xs">Max APR (%)</span>
+											<div class="flex flex-col h-4 w-3 opacity-60 group-hover:opacity-100">
+												{#if sortColumn === 'max_apr' && sortDirection === 'asc'}
+													<ChevronUp class="h-3 w-3 text-primary" />
+												{:else}
+													<ChevronUp class="h-2 w-3 {sortColumn === 'max_apr' ? 'opacity-30' : 'opacity-40'}" />
+												{/if}
+												{#if sortColumn === 'max_apr' && sortDirection === 'desc'}
+													<ChevronDown class="h-3 w-3 text-primary -mt-1" />
+												{:else}
+													<ChevronDown class="h-2 w-3 {sortColumn === 'max_apr' ? 'opacity-30' : 'opacity-40'} -mt-1" />
+												{/if}
+											</div>
+										</button>
+									</div>
+								</th>
+								
+								<!-- Max Base Fee Column -->
+								<th class="text-center p-4 border-b border-l border-border font-semibold text-sm min-w-28">
+									<div class="flex items-center justify-center gap-2">
+										<button 
+											on:click={() => sortAds('max_base_fee')}
+											class="flex items-center gap-1 hover:text-primary transition-colors group">
+											<span class="text-muted-foreground text-xs">Max Base Fee (sat)</span>
+											<div class="flex flex-col h-4 w-3 opacity-60 group-hover:opacity-100">
+												{#if sortColumn === 'max_base_fee' && sortDirection === 'asc'}
+													<ChevronUp class="h-3 w-3 text-primary" />
+												{:else}
+													<ChevronUp class="h-2 w-3 {sortColumn === 'max_base_fee' ? 'opacity-30' : 'opacity-40'}" />
+												{/if}
+												{#if sortColumn === 'max_base_fee' && sortDirection === 'desc'}
+													<ChevronDown class="h-3 w-3 text-primary -mt-1" />
+												{:else}
+													<ChevronDown class="h-2 w-3 {sortColumn === 'max_base_fee' ? 'opacity-30' : 'opacity-40'} -mt-1" />
+												{/if}
+											</div>
+										</button>
+									</div>
+								</th>
+								
+								<!-- Max Fee Rate Column -->
+								<th class="text-center p-4 border-b border-border font-semibold text-sm min-w-28">
+									<div class="flex items-center justify-center gap-2">
+										<button 
+											on:click={() => sortAds('max_fee_rate')}
+											class="flex items-center gap-1 hover:text-primary transition-colors group">
+											<span class="text-muted-foreground text-xs">Max Fee Rate (ppm)</span>
+											<div class="flex flex-col h-4 w-3 opacity-60 group-hover:opacity-100">
+												{#if sortColumn === 'max_fee_rate' && sortDirection === 'asc'}
+													<ChevronUp class="h-3 w-3 text-primary" />
+												{:else}
+													<ChevronUp class="h-2 w-3 {sortColumn === 'max_fee_rate' ? 'opacity-30' : 'opacity-40'}" />
+												{/if}
+												{#if sortColumn === 'max_fee_rate' && sortDirection === 'desc'}
+													<ChevronDown class="h-3 w-3 text-primary -mt-1" />
+												{:else}
+													<ChevronDown class="h-2 w-3 {sortColumn === 'max_fee_rate' ? 'opacity-30' : 'opacity-40'} -mt-1" />
+												{/if}
+											</div>
+										</button>
+									</div>
+								</th>
+
+								<!-- node total capacity -->
+								<th class="text-center p-4 border-b border-border font-semibold text-sm min-w-28">
+									<div class="flex items-center justify-center gap-2">
+										<button 
+											on:click={() => sortAds('total_capacity')}
+											class="flex items-center gap-1 hover:text-primary transition-colors group">
+											<span class="text-muted-foreground text-xs">Capacity (sat)</span>
+											<div class="flex flex-col h-4 w-3 opacity-60 group-hover:opacity-100">
+												{#if sortColumn === 'total_capacity' && sortDirection === 'asc'}
+													<ChevronUp class="h-3 w-3 text-primary" />
+												{:else}
+													<ChevronUp class="h-2 w-3 {sortColumn === 'total_capacity' ? 'opacity-30' : 'opacity-40'}" />
+												{/if}
+												{#if sortColumn === 'total_capacity' && sortDirection === 'desc'}
+													<ChevronDown class="h-3 w-3 text-primary -mt-1" />
+												{:else}
+													<ChevronDown class="h-2 w-3 {sortColumn === 'total_capacity' ? 'opacity-30' : 'opacity-40'} -mt-1" />
+												{/if}
+											</div>
+										</button>
+									</div>
+								</th>
+
+								<!-- node number of channels -->
+								<th class="text-center p-4 border-b border-border font-semibold text-sm min-w-28">
+									<div class="flex items-center justify-center gap-2">
+										<button 
+											on:click={() => sortAds('num_channels')}
+											class="flex items-center gap-1 hover:text-primary transition-colors group">
+											<span class="text-muted-foreground text-xs">Channels</span>
+											<div class="flex flex-col h-4 w-3 opacity-60 group-hover:opacity-100">
+												{#if sortColumn === 'num_channels' && sortDirection === 'asc'}
+													<ChevronUp class="h-3 w-3 text-primary" />
+												{:else}
+													<ChevronUp class="h-2 w-3 {sortColumn === 'num_channels' ? 'opacity-30' : 'opacity-40'}" />
+												{/if}
+												{#if sortColumn === 'num_channels' && sortDirection === 'desc'}
+													<ChevronDown class="h-3 w-3 text-primary -mt-1" />
+												{:else}
+													<ChevronDown class="h-2 w-3 {sortColumn === 'num_channels' ? 'opacity-30' : 'opacity-40'} -mt-1" />
+												{/if}
+											</div>
+										</button>
+									</div>
+								</th>
+
+								<!-- node median outbound ppm -->
+								<th class="text-center p-4 border-b border-border font-semibold text-sm min-w-28">
+									<div class="flex items-center justify-center gap-2">
+										<button 
+											on:click={() => sortAds('median_outbound_ppm')}
+											class="flex items-center gap-1 hover:text-primary transition-colors group">
+											<span class="text-muted-foreground text-xs">Med Out Fees (ppm)</span>
+											<div class="flex flex-col h-4 w-3 opacity-60 group-hover:opacity-100">
+												{#if sortColumn === 'median_outbound_ppm' && sortDirection === 'asc'}
+													<ChevronUp class="h-3 w-3 text-primary" />
+												{:else}
+													<ChevronUp class="h-2 w-3 {sortColumn === 'median_outbound_ppm' ? 'opacity-30' : 'opacity-40'}" />
+												{/if}
+												{#if sortColumn === 'median_outbound_ppm' && sortDirection === 'desc'}
+													<ChevronDown class="h-3 w-3 text-primary -mt-1" />
+												{:else}
+													<ChevronDown class="h-2 w-3 {sortColumn === 'median_outbound_ppm' ? 'opacity-30' : 'opacity-40'} -mt-1" />
+												{/if}
+											</div>
+										</button>
+									</div>
+								</th>
+
+								<!-- node median inbound ppm -->
+								<th class="text-center p-4 border-b border-border font-semibold text-sm min-w-28">
+									<div class="flex items-center justify-center gap-2">
+										<button 
+											on:click={() => sortAds('median_inbound_ppm')}
+											class="flex items-center gap-1 hover:text-primary transition-colors group">
+											<span class="text-muted-foreground text-xs">Med In Fees (ppm)</span>
+											<div class="flex flex-col h-4 w-3 opacity-60 group-hover:opacity-100">
+												{#if sortColumn === 'median_inbound_ppm' && sortDirection === 'asc'}
+													<ChevronUp class="h-3 w-3 text-primary" />
+												{:else}
+													<ChevronUp class="h-2 w-3 {sortColumn === 'median_inbound_ppm' ? 'opacity-30' : 'opacity-40'}" />
+												{/if}
+												{#if sortColumn === 'median_inbound_ppm' && sortDirection === 'desc'}
+													<ChevronDown class="h-3 w-3 text-primary -mt-1" />
+												{:else}
+													<ChevronDown class="h-2 w-3 {sortColumn === 'median_inbound_ppm' ? 'opacity-30' : 'opacity-40'} -mt-1" />
+												{/if}
+											</div>
+										</button>
+									</div>
+								</th>
+							</tr>
+						</thead>
+						
+						<!-- Table Body -->
+						<tbody>
+							{#each sortedAds as ad, index}
+								<!-- Main data row -->
+								<tr class="hover:bg-accent/30 transition-colors {index > 0 && !sortedAds[index - 1].value_prop ? 'border-t border-border' : ''} {ad.value_prop ? '' : 'border-b border-border'}">
+									<!-- LSP Name -->
+									<td class="p-4 border-r border-border/40">
+										<div class="flex items-center gap-3">
+											<span class="font-medium text-foreground">{ad.lsp_alias || 'Unknown LSP'}</span>
+											<button 
+												on:click={() => copyToClipboard(ad.lsp_pubkey, `lsp_pubkey_${ad.d}`)}
+												class="p-1 hover:bg-accent rounded transition-colors relative flex-shrink-0 opacity-60 hover:opacity-100"
+												title="Copy LSP pubkey to clipboard">
+												<Copy class="h-3 w-3" />
+												{#if copiedTooltips[`lsp_pubkey_${ad.d}`]}
+													<div class="absolute -top-8 left-1/2 transform -translate-x-1/2 bg-popover border border-border text-popover-foreground text-xs px-2 py-1 rounded whitespace-nowrap z-10 animate-in fade-in duration-200">
+														Copied LSP pubkey!
+														</div>
+												{/if}
+											</button>
+										</div>
+									</td>
+									
+									<!-- Min Capacity -->
+									<td class="p-4 text-center border-r border-border/40">
+										<div class="font-medium text-sm text-foreground">
+											{formatCapacity(ad.min_channel_balance_sat)}M
+										</div>
+									</td>
+
+									<!-- Max Capacity -->
+									<td class="p-4 text-center border-r border-border/40">
+										<div class="font-medium text-sm text-foreground">
+											{formatCapacity(ad.max_channel_balance_sat)}M
+										</div>
+									</td>
+									
+									<!-- Max Lease Time -->
+									<td class="p-4 text-center border-r border-border/40">
+										<div class="text-sm text-foreground">
+											{#if ad.max_channel_expiry_blocks !== undefined}
+												<div class="font-medium">{formatBigNum(ad.max_channel_expiry_blocks)}</div>
+												<div class="text-xs text-muted-foreground mt-0.5">
+													~{Math.round(ad.max_channel_expiry_blocks / 144)} days
+												</div>
+											{:else}
+												<span class="text-muted-foreground">N/A</span>
+											{/if}
+										</div>
+									</td>
+									
+									<!-- Fixed Cost -->
+									<td class="p-4 text-center border-r border-border/40">
+										<div class="font-medium text-sm text-foreground">
+											{formatBigNum(ad.fixed_cost_sats)}
+										</div>
+									</td>
+									
+									<!-- Variable Cost -->
+									<td class="p-4 text-center border-r border-border/40">
+										<div class="font-medium text-sm text-foreground">
+											{formatBigNum(ad.variable_cost_ppm)}
+										</div>
+									</td>
+
+									<!-- Min APR -->
+									<td class="p-4 text-center border-r border-border/40">
+										<div class="font-medium text-sm text-foreground">
+											{#if ad.min_apr !== undefined}
+												<span>{ad.min_apr.toFixed(2)}</span>
+											{:else}
+												<span class="text-muted-foreground">N/A</span>
+											{/if}
+										</div>
+									</td>
+									
+									<!-- Max APR -->
+									<td class="p-4 text-center border-r border-border/40">
+										<div class="font-medium text-sm text-foreground">
+											{#if ad.max_apr !== undefined}
+												<span>{ad.max_apr.toFixed(2)}</span>
+											{:else}
+												<span class="text-muted-foreground">N/A</span>
+											{/if}
+										</div>
+									</td>
+									
+									<!-- Max Base Fee -->
+									<td class="p-4 text-center border-r border-border/40">
+										<div class="font-medium text-sm text-foreground">
+											{#if ad.max_promised_base_fee !== undefined}
+												{formatBigNum(ad.max_promised_base_fee)}
+											{:else}
+												<span class="text-muted-foreground">N/A</span>
+											{/if}
+										</div>
+									</td>
+									
+									<!-- Max Fee Rate -->
+									<td class="p-4 text-center border-r border-border/40">
+										<div class="font-medium text-sm text-foreground">
+											{#if ad.max_promised_fee_rate !== undefined}
+												{formatBigNum(ad.max_promised_fee_rate)}
+											{:else}
+												<span class="text-muted-foreground">N/A</span>
+											{/if}
+										</div>
+									</td>
+
+									<!-- total capacity -->
+									<td class="p-4 text-center border-r border-border/40">
+										<div class="font-medium text-sm text-foreground">
+											{#if ad.total_capacity !== undefined}
+												{formatCapacity(ad.total_capacity)}M
+											{:else}
+												<span class="text-muted-foreground">N/A</span>
+											{/if}
+										</div>
+									</td>
+
+									<!-- num channels -->
+									<td class="p-4 text-center border-r border-border/40">
+										<div class="font-medium text-sm text-foreground">
+											{#if ad.num_channels !== undefined}
+												{formatBigNum(ad.num_channels)}
+											{:else}
+												<span class="text-muted-foreground">N/A</span>
+											{/if}
+										</div>
+									</td>
+
+									<!-- median outbound ppm -->
+									<td class="p-4 text-center border-r border-border/40">
+										<div class="font-medium text-sm text-foreground">
+											{#if ad.median_outbound_ppm !== undefined}
+												{formatBigNum(ad.median_outbound_ppm)}
+											{:else}
+												<span class="text-muted-foreground">N/A</span>
+											{/if}
+										</div>
+									</td>
+
+									<!-- median inbound ppm -->
+									<td class="p-4 text-center border-r border-border/40">
+										<div class="font-medium text-sm text-foreground">
+											{#if ad.median_inbound_ppm !== undefined}
+												{formatBigNum(ad.median_inbound_ppm)}
+											{:else}
+												<span class="text-muted-foreground">N/A</span>
+											{/if}
+										</div>
+									</td>
+								</tr>
+								
+								<!-- Value proposition subsection row (spans full table width) -->
+								{#if ad.value_prop}
+									<tr class="hover:bg-accent/30 transition-colors border-b border-border">
+										<td colspan="10" class="px-4 py-3 pt-0">
+											<div class="flex items-center gap-3">
+												<button 
+													on:click={() => selectAd(ad)}
+													class="text-sm bg-primary text-primary-foreground px-1 py-1 rounded-md font-medium hover:bg-primary/90 transition-colors shadow-sm">
+													Select
+												</button>
+												<span class="bg-muted/50 text-primary px-2 py-0.5 rounded text-xs">
+													{ad.value_prop}
+												</span>
+											</div>
+										</td>
+									</tr>
+								{:else}
+									<!-- If no value_prop, create a minimal row just for the Select button -->
+									<tr class="hover:bg-accent/30 transition-colors border-b border-border">
+										<td colspan="10" class="px-4 py-2">
+											<div class="flex items-center">
+												<button 
+													on:click={() => selectAd(ad)}
+													class="text-sm bg-primary text-primary-foreground px-3 py-1.5 rounded-md font-medium hover:bg-primary/90 transition-colors shadow-sm">
+													Select
+												</button>
+											</div>
+										</td>
+									</tr>
+								{/if}
+							{/each}
+						</tbody>
+					</table>
 				</div>
 			{/if}
 		</div>
@@ -1083,7 +1582,7 @@
 				<h2 class="text-xl font-semibold">Configure channel</h2>
 				<button 
 					on:click={resetWorkflow}
-					class="px-3 py-1.5 border rounded-md hover:bg-accent transition-colors">
+					class="px-1 py-1 text-sm border rounded-md hover:bg-accent transition-colors">
 					Back to LSPs
 				</button>
 			</div>
@@ -1092,38 +1591,31 @@
 				<h3 class="font-medium mb-3">Selected LSP: {selectedAdInfo.lsp_alias || 'Unknown'}</h3>
 				
 				<!-- Responsive grid layout matching the ad display -->
-				<div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-5 gap-3">
+				<div class="grid grid-cols-2 md:grid-cols-3 lg:grid-cols-6 gap-3">
 					<!-- Channel Capacity -->
 					<div class="text-center">
 						<div class="font-medium text-sm">
-							{formatCapacity(selectedAdInfo.min_channel_balance_sat)} - {formatCapacity(selectedAdInfo.max_channel_balance_sat)}
+							{formatCapacity(selectedAdInfo.min_channel_balance_sat)}M - {formatCapacity(selectedAdInfo.max_channel_balance_sat)}M
 						</div>
 						<div class="flex items-center justify-center gap-1">
-							<span class="text-xs text-muted-foreground">Capacity</span>
-							<div class="relative">
-								<button
-									type="button"
-									on:click={() => toggleAdPopover('selected', 'capacity')}
-									class="p-0.5 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-full transition-colors"
-									title="Channel capacity info"
-								>
-									<HelpCircle class="h-3 w-3 text-muted-foreground" />
-								</button>
-								{#if showAdPopovers['selected-capacity']}
-									<!-- svelte-ignore a11y-click-events-have-key-events -->
-									<!-- svelte-ignore a11y-no-static-element-interactions -->
-									<div 
-										class="fixed inset-0 z-40" 
-										on:click={() => toggleAdPopover('selected', 'capacity')}
-									></div>
-									<div class="absolute left-0 top-6 z-50 w-64 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg p-3 text-xs text-gray-600 dark:text-gray-300">
-										<p class="font-medium text-gray-900 dark:text-gray-100 mb-1">Channel Capacity Range</p>
-                    <p>The minimum and maximum channel size (in sats) that this LSP will open for you. The sum of the inbound and outbound sats must fit within this range.</p>
-									</div>
-								{/if}
-							</div>
+							<span class="text-xs text-muted-foreground">Capacity (sat)</span>
 						</div>
 					</div>
+
+					<!-- Max Lease Time -->
+					{#if selectedAdInfo.max_channel_expiry_blocks !== undefined}
+						<div class="text-center">
+							<div class="font-medium text-sm">
+								<div>{formatBigNum(selectedAdInfo.max_channel_expiry_blocks)}</div>
+								<div class="text-xs text-muted-foreground mt-0.5">
+									~{Math.round(selectedAdInfo.max_channel_expiry_blocks / 144)} days
+								</div>
+							</div>
+							<div class="flex items-center justify-center gap-1">
+								<span class="text-xs text-muted-foreground">Max Lease Time</span>
+							</div>
+						</div>
+					{/if}
 
 					<!-- Fixed Cost -->
 					<div class="text-center">
@@ -1132,28 +1624,6 @@
 						</div>
 						<div class="flex items-center justify-center gap-1">
 							<span class="text-xs text-muted-foreground">Fixed Cost</span>
-							<div class="relative">
-								<button
-									type="button"
-									on:click={() => toggleAdPopover('selected', 'fixed')}
-									class="p-0.5 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-full transition-colors"
-									title="Fixed cost info"
-								>
-									<HelpCircle class="h-3 w-3 text-muted-foreground" />
-								</button>
-								{#if showAdPopovers['selected-fixed']}
-									<!-- svelte-ignore a11y-click-events-have-key-events -->
-									<!-- svelte-ignore a11y-no-static-element-interactions -->
-									<div 
-										class="fixed inset-0 z-40" 
-										on:click={() => toggleAdPopover('selected', 'fixed')}
-									></div>
-									<div class="absolute left-0 top-6 z-50 w-64 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg p-3 text-xs text-gray-600 dark:text-gray-300">
-										<p class="font-medium text-gray-900 dark:text-gray-100 mb-1">Fixed Opening Cost</p>
-										<p>A flat fee charged by the LSP for opening the channel, regardless of channel size.</p>
-									</div>
-								{/if}
-							</div>
 						</div>
 					</div>
 
@@ -1164,28 +1634,6 @@
 						</div>
 						<div class="flex items-center justify-center gap-1">
 							<span class="text-xs text-muted-foreground">Variable Cost</span>
-							<div class="relative">
-								<button
-									type="button"
-									on:click={() => toggleAdPopover('selected', 'variable')}
-									class="p-0.5 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-full transition-colors"
-									title="Variable cost info"
-								>
-									<HelpCircle class="h-3 w-3 text-muted-foreground" />
-								</button>
-								{#if showAdPopovers['selected-variable']}
-									<!-- svelte-ignore a11y-click-events-have-key-events -->
-									<!-- svelte-ignore a11y-no-static-element-interactions -->
-									<div 
-										class="fixed inset-0 z-40" 
-										on:click={() => toggleAdPopover('selected', 'variable')}
-									></div>
-									<div class="absolute left-0 top-6 z-50 w-64 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg p-3 text-xs text-gray-600 dark:text-gray-300">
-										<p class="font-medium text-gray-900 dark:text-gray-100 mb-1">Variable Opening Cost</p>
-										<p>A proportional fee (parts per million) based on the channel capacity. Larger channels cost more.</p>
-									</div>
-								{/if}
-							</div>
 						</div>
 					</div>
 
@@ -1197,28 +1645,6 @@
 							</div>
 							<div class="flex items-center justify-center gap-1">
 								<span class="text-xs text-muted-foreground">Max Base Fee</span>
-								<div class="relative">
-									<button
-										type="button"
-										on:click={() => toggleAdPopover('selected', 'basefee')}
-										class="p-0.5 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-full transition-colors"
-										title="Max base fee info"
-									>
-										<HelpCircle class="h-3 w-3 text-muted-foreground" />
-									</button>
-									{#if showAdPopovers['selected-basefee']}
-										<!-- svelte-ignore a11y-click-events-have-key-events -->
-										<!-- svelte-ignore a11y-no-static-element-interactions -->
-										<div 
-											class="fixed inset-0 z-40" 
-											on:click={() => toggleAdPopover('selected', 'basefee')}
-										></div>
-										<div class="absolute left-0 top-6 z-50 w-64 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg p-3 text-xs text-gray-600 dark:text-gray-300">
-											<p class="font-medium text-gray-900 dark:text-gray-100 mb-1">Maximum Promised Base Fee</p>
-											<p>The maximum base fee the LSP promises to charge for routing payments through this channel.</p>
-										</div>
-									{/if}
-								</div>
 							</div>
 						</div>
 					{/if}
@@ -1231,28 +1657,6 @@
 							</div>
 							<div class="flex items-center justify-center gap-1">
 								<span class="text-xs text-muted-foreground">Max Fee Rate</span>
-								<div class="relative">
-									<button
-										type="button"
-										on:click={() => toggleAdPopover('selected', 'feerate')}
-										class="p-0.5 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-full transition-colors"
-										title="Max fee rate info"
-									>
-										<HelpCircle class="h-3 w-3 text-muted-foreground" />
-									</button>
-									{#if showAdPopovers['selected-feerate']}
-										<!-- svelte-ignore a11y-click-events-have-key-events -->
-										<!-- svelte-ignore a11y-no-static-element-interactions -->
-										<div 
-											class="fixed inset-0 z-40" 
-											on:click={() => toggleAdPopover('selected', 'feerate')}
-										></div>
-										<div class="absolute left-0 top-6 z-50 w-64 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg p-3 text-xs text-gray-600 dark:text-gray-300">
-											<p class="font-medium text-gray-900 dark:text-gray-100 mb-1">Maximum Promised Fee Rate</p>
-											<p>The maximum proportional fee rate (parts per million) the LSP promises to charge for routing payments through this channel.</p>
-										</div>
-									{/if}
-								</div>
 							</div>
 						</div>
 					{/if}
@@ -1284,28 +1688,6 @@
 					<div>
 						<label for="client_balance" class="block text-sm font-medium mb-2 flex items-center gap-1">
 							{formatBigNum(orderData.client_balance_sat)} sats outbound
-							<div class="relative">
-								<button
-									type="button"
-									on:click={() => showOutboundPopover = !showOutboundPopover}
-									class="p-0.5 hover:bg-gray-200 dark:hover:bg-gray-700 rounded-full transition-colors"
-									title="What is outbound liquidity?"
-								>
-									<HelpCircle class="h-3 w-3 text-muted-foreground" />
-								</button>
-								{#if showOutboundPopover}
-									<!-- svelte-ignore a11y-click-events-have-key-events -->
-									<!-- svelte-ignore a11y-no-static-element-interactions -->
-									<div 
-										class="fixed inset-0 z-40" 
-										on:click={() => showOutboundPopover = false}
-									></div>
-									<div class="absolute left-0 top-6 z-50 w-64 bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 rounded-lg shadow-lg p-3 text-xs text-gray-600 dark:text-gray-300">
-										<p class="font-medium text-gray-900 dark:text-gray-100 mb-1">Outbound Liquidity</p>
-										<p>This is the amount you can send through the channel after it opens so you can start spending immediately. This starting amount gets added to the order invoice, since LSPs don't normally give sats away for free, you know!</p>
-									</div>
-								{/if}
-							</div>
 						</label>
 						<div class="space-y-2">
 							<input 
@@ -1324,21 +1706,50 @@
 					</div>
 				</div>
 
-				<div class="flex items-center space-x-3">
-					<button 
-						type="button"
-						id="announce_channel"
-						on:click={() => orderData.announce_channel = !orderData.announce_channel}
-						class="relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-primary/20 focus:ring-offset-2 bg-gray-200 dark:bg-gray-700 }"
-						role="switch"
-						aria-checked={orderData.announce_channel}>
-						<span 
-							class="inline-block h-4 w-4 transform rounded-full bg-white transition-transform {orderData.announce_channel ? 'translate-x-6' : 'translate-x-1'}">
-						</span>
-					</button>
-					<label for="announce_channel" class="text-sm font-medium">
-						{orderData.announce_channel ? 'Make channel public' : 'Make channel private'}
-					</label>
+				<div class="grid md:grid-cols-2 gap-6">
+					<div>
+						<label for="channel_expiry_blocks" class="block text-sm font-medium mb-2">
+							Channel Lease Duration {formatBigNum(orderData.channel_expiry_blocks)} blocks (~{Math.round(orderData.channel_expiry_blocks / 144)} days)
+						</label>
+						<div class="space-y-2">
+							<input 
+								id="channel_expiry_blocks"
+								type="range" 
+								bind:value={orderData.channel_expiry_blocks}
+								min="1000"
+								max={selectedAdInfo.max_channel_expiry_blocks || 52560}
+								step="144"
+								class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer dark:bg-gray-700 slider" />
+							<div class="flex justify-between text-xs text-muted-foreground">
+								<span>1,000 blocks (~7 days)</span>
+								<span>{formatBigNum(selectedAdInfo.max_channel_expiry_blocks || 52560)} blocks (~{Math.round((selectedAdInfo.max_channel_expiry_blocks || 52560) / 144)} days)</span>
+							</div>
+						</div>
+					</div>
+
+					<div>
+						<label for="announce_channel" class="block text-sm font-medium mb-2">
+							Channel Announcement
+						</label>
+						<div class="space-y-2">
+							<div class="flex items-center space-x-3 py-3">
+								<button 
+									type="button"
+									id="announce_channel"
+									on:click={() => orderData.announce_channel = !orderData.announce_channel}
+									class="relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-primary/20 focus:ring-offset-2 bg-gray-200 dark:bg-gray-700"
+									role="switch"
+									aria-checked={orderData.announce_channel}>
+									<span 
+										class="inline-block h-4 w-4 transform rounded-full bg-white transition-transform {orderData.announce_channel ? 'translate-x-6' : 'translate-x-1'}">
+									</span>
+								</button>
+								<label for="announce_channel" class="text-sm font-medium">
+									{orderData.announce_channel ? 'Public' : 'Private'}
+								</label>
+							</div>
+						</div>
+					</div>
 				</div>
 
 				<div>
@@ -1373,7 +1784,7 @@
 						<div>
 							<span class="text-muted-foreground">Expected Cost:</span>
 							<span class="font-medium">
-								{formatBigNum(orderData.client_balance_sat + selectedAdInfo.fixed_cost_sats + Math.round(selectedAdInfo.variable_cost_ppm * (orderData.lsp_balance_sat) / 1000000))} sats
+								{formatBigNum(Math.round((orderData.client_balance_sat + selectedAdInfo.fixed_cost_sats + Math.round(selectedAdInfo.variable_cost_ppm * (orderData.lsp_balance_sat) / 1000000)) * orderData.channel_expiry_blocks / selectedAdInfo.max_channel_expiry_blocks))} sats
 							</span>
 						</div>
 					</div>
@@ -1436,6 +1847,10 @@
 					<div>
 						<span class="text-muted-foreground">Outbound Liquidity</span>
 						<span class="ml-2 font-medium">{formatBigNum(orderResult.client_balance_sat || 0)} sats</span>
+					</div>
+					<div>
+						<span class="text-muted-foreground">Lease Duration</span>
+						<span class="ml-2 font-medium">{formatBigNum(orderResult.channel_expiry_blocks || 0)} blocks</span>
 					</div>
 					<div>
 						<span class="text-muted-foreground">Public Channel:</span>
