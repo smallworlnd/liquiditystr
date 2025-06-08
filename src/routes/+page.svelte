@@ -1728,6 +1728,7 @@
 					</div>
 
 					<div class="grid grid-cols-2 gap-4">
+            {#if false}
 						<div>
 							<div class="relative mb-2">
 								<div class="flex items-center gap-2 text-sm font-medium">
@@ -1771,6 +1772,7 @@
 								</div>
 							</div>
 						</div>
+            {/if}
 						<div>
 							<div class="relative mb-2">
 								<div class="flex items-center gap-2 text-sm font-medium">
