@@ -14,7 +14,7 @@
 		channel_expiry_blocks: 13000,
 		target_pubkey_uri: '',
 		required_channel_confirmations: 0,
-		funding_confirms_within_blocks: 6,
+		funding_confirms_within_blocks: 2,
 		announce_channel: true
 	});
 	const orderResponse = writable(null);
@@ -40,7 +40,7 @@
 		channel_expiry_blocks: 13000,
 		target_pubkey_uri: '',
 		required_channel_confirmations: 0,
-		funding_confirms_within_blocks: 6,
+		funding_confirms_within_blocks: 2,
 		announce_channel: true
 	};
 	let orderResult = null;
@@ -232,7 +232,7 @@
 			lsp_balance_sat: Math.max(order.lsp_balance_sat, ad.min_channel_balance_sat || 100000),
 			channel_expiry_blocks: ad.max_channel_expiry_blocks,
 			required_channel_confirmations: 0,  // OrderSettings default
-			funding_confirms_within_blocks: 6    // OrderSettings default
+			funding_confirms_within_blocks: ad.min_funding_confirms_within_blocks    // OrderSettings default
 		}));
 		step.set(2);
 	}
@@ -565,7 +565,7 @@
 			channel_expiry_blocks: 13000,
 			target_pubkey_uri: '',
 			required_channel_confirmations: 0,
-			funding_confirms_within_blocks: 6,
+			funding_confirms_within_blocks: 2,
 			announce_channel: true
 		});
 		orderResponse.set(null);
@@ -1727,26 +1727,95 @@
 						</div>
 					</div>
 
-					<div>
-						<label for="announce_channel" class="block text-sm font-medium mb-2">
-							Channel Announcement
-						</label>
-						<div class="space-y-2">
-							<div class="flex items-center space-x-3 py-3">
-								<button 
-									type="button"
-									id="announce_channel"
-									on:click={() => orderData.announce_channel = !orderData.announce_channel}
-									class="relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-primary/20 focus:ring-offset-2 bg-gray-200 dark:bg-gray-700"
-									role="switch"
-									aria-checked={orderData.announce_channel}>
-									<span 
-										class="inline-block h-4 w-4 transform rounded-full bg-white transition-transform {orderData.announce_channel ? 'translate-x-6' : 'translate-x-1'}">
-									</span>
-								</button>
-								<label for="announce_channel" class="text-sm font-medium">
-									{orderData.announce_channel ? 'Public' : 'Private'}
-								</label>
+					<div class="grid grid-cols-2 gap-4">
+						<div>
+							<div class="relative mb-2">
+								<div class="flex items-center gap-2 text-sm font-medium">
+									<label for="funding_confirms_within_blocks">
+										Confirms in {orderData.funding_confirms_within_blocks} block{orderData.funding_confirms_within_blocks == 1 ? '' : 's'}
+									</label>
+									<button
+										type="button"
+										on:click={() => toggleAdPopover('form', 'funding_confirms')}
+										class="p-1 hover:bg-accent rounded-full transition-colors"
+										title="Funding confirmation info"
+									>
+										<HelpCircle class="h-3 w-3 text-muted-foreground" />
+									</button>
+								</div>
+								{#if showAdPopovers['form-funding_confirms']}
+									<!-- svelte-ignore a11y-click-events-have-key-events -->
+									<!-- svelte-ignore a11y-no-static-element-interactions -->
+									<div 
+										class="fixed inset-0 z-40" 
+										on:click={() => toggleAdPopover('form', 'funding_confirms')}
+									></div>
+									<div class="absolute left-0 top-8 z-50 w-64 bg-background border border-border rounded-lg shadow-lg p-3 text-xs">
+										<p class="font-medium mb-1">Funding Confirmation Time</p>
+										<p class="text-muted-foreground">This sets target number of blocks within which the channel funding transaction should be confirmed. Lower values mean faster confirmation but may require higher transaction fees during busy periods. <strong>The min value is 2 which means the transaction is likely to be confirmed the fastest</strong>.</p>
+									</div>
+								{/if}
+							</div>
+							<div class="space-y-2">
+								<input 
+									id="funding_confirms_within_blocks"
+									type="range" 
+									bind:value={orderData.funding_confirms_within_blocks}
+									min={selectedAdInfo.min_funding_confirms_within_blocks}
+									max="50"
+									step="1"
+									class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer dark:bg-gray-700 slider" />
+								<div class="flex justify-between text-xs text-muted-foreground">
+									<span>{selectedAdInfo.min_funding_confirms_within_blocks} blocks</span>
+									<span>50 blocks</span>
+								</div>
+							</div>
+						</div>
+						<div>
+							<div class="relative mb-2">
+								<div class="flex items-center gap-2 text-sm font-medium">
+									<label for="announce_channel">
+										Channel Announcement
+									</label>
+									<button
+										type="button"
+										on:click={() => toggleAdPopover('form', 'channel_announcement')}
+										class="p-1 hover:bg-accent rounded-full transition-colors"
+										title="Channel announcement info"
+									>
+										<HelpCircle class="h-3 w-3 text-muted-foreground" />
+									</button>
+								</div>
+								{#if showAdPopovers['form-channel_announcement']}
+									<!-- svelte-ignore a11y-click-events-have-key-events -->
+									<!-- svelte-ignore a11y-no-static-element-interactions -->
+									<div 
+										class="fixed inset-0 z-40" 
+										on:click={() => toggleAdPopover('form', 'channel_announcement')}
+									></div>
+									<div class="absolute left-0 top-8 z-50 w-64 bg-background border border-border rounded-lg shadow-lg p-3 text-xs">
+										<p class="font-medium mb-1">Channel Announcement</p>
+										<p class="text-muted-foreground">Public channels are announced in Lightning Network gossip. Private channels are not announced and won't appear in the graph.</p>
+									</div>
+								{/if}
+							</div>
+							<div class="space-y-2">
+								<div class="flex items-center space-x-3 py-3">
+									<button 
+										type="button"
+										id="announce_channel"
+										on:click={() => orderData.announce_channel = !orderData.announce_channel}
+										class="relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-primary/20 focus:ring-offset-2 bg-gray-200 dark:bg-gray-700"
+										role="switch"
+										aria-checked={orderData.announce_channel}>
+										<span 
+											class="inline-block h-4 w-4 transform rounded-full bg-white transition-transform {orderData.announce_channel ? 'translate-x-6' : 'translate-x-1'}">
+										</span>
+									</button>
+									<label for="announce_channel" class="text-sm font-medium">
+										{orderData.announce_channel ? 'Public' : 'Private'}
+									</label>
+								</div>
 							</div>
 						</div>
 					</div>
