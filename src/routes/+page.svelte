@@ -1855,7 +1855,7 @@
 						<div>
 							<span class="text-muted-foreground">Expected Cost:</span>
 							<span class="font-medium">
-								{formatBigNum(Math.round((orderData.client_balance_sat + selectedAdInfo.fixed_cost_sats + Math.round(selectedAdInfo.variable_cost_ppm * (orderData.lsp_balance_sat) / 1000000)) * orderData.channel_expiry_blocks / selectedAdInfo.max_channel_expiry_blocks))} sats
+								{formatBigNum(Math.round(orderData.client_balance_sat + selectedAdInfo.fixed_cost_sats + (selectedAdInfo.variable_cost_ppm * orderData.lsp_balance_sat / 1000000 * orderData.channel_expiry_blocks / selectedAdInfo.max_channel_expiry_blocks)))} sats
 							</span>
 						</div>
 					</div>
