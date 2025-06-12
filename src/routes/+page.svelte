@@ -505,6 +505,90 @@
 		}
 	}
 
+	// Helper functions for constrained sliders
+	function getConstrainedLspBalance() {
+		if (!selectedAdInfo) return orderData.lsp_balance_sat;
+		
+		const minChannel = selectedAdInfo.min_channel_balance_sat || 0;
+		const maxChannel = selectedAdInfo.max_channel_balance_sat || Number.MAX_SAFE_INTEGER;
+		const currentClient = orderData.client_balance_sat || 0;
+		
+		// LSP balance range is constrained by total channel requirements
+		const minLsp = Math.max(0, minChannel - currentClient);
+		const maxLsp = maxChannel - currentClient;
+		
+		return Math.min(Math.max(orderData.lsp_balance_sat, minLsp), Math.max(minLsp, maxLsp));
+	}
+	
+	function getConstrainedClientBalance() {
+		if (!selectedAdInfo) return orderData.client_balance_sat;
+		
+		const minChannel = selectedAdInfo.min_channel_balance_sat || 0;
+		const maxChannel = selectedAdInfo.max_channel_balance_sat || Number.MAX_SAFE_INTEGER;
+		const currentLsp = orderData.lsp_balance_sat || 0;
+		
+		// Client balance range is constrained by total channel requirements
+		const minClient = Math.max(0, minChannel - currentLsp);
+		const maxClient = maxChannel - currentLsp;
+		
+		return Math.min(Math.max(orderData.client_balance_sat, minClient), Math.max(minClient, maxClient));
+	}
+	
+	function handleLspBalanceChange() {
+		if (!selectedAdInfo) return;
+		
+		const minChannel = selectedAdInfo.min_channel_balance_sat || 0;
+		const maxChannel = selectedAdInfo.max_channel_balance_sat || Number.MAX_SAFE_INTEGER;
+		const totalCapacity = orderData.lsp_balance_sat + orderData.client_balance_sat;
+		
+		// If total exceeds max channel capacity, reduce client balance
+		if (totalCapacity > maxChannel) {
+			orderData.client_balance_sat = Math.max(0, maxChannel - orderData.lsp_balance_sat);
+		}
+		
+		// If total is below min channel capacity, increase client balance if possible
+		if (totalCapacity < minChannel) {
+			const neededClient = minChannel - orderData.lsp_balance_sat;
+			const maxPossibleClient = maxChannel - orderData.lsp_balance_sat;
+			orderData.client_balance_sat = Math.min(neededClient, maxPossibleClient);
+		}
+		
+		// Update the order request store
+		orderRequest.update(order => ({
+			...order,
+			lsp_balance_sat: orderData.lsp_balance_sat,
+			client_balance_sat: orderData.client_balance_sat
+		}));
+	}
+	
+	function handleClientBalanceChange() {
+		if (!selectedAdInfo) return;
+		
+		const minChannel = selectedAdInfo.min_channel_balance_sat || 0;
+		const maxChannel = selectedAdInfo.max_channel_balance_sat || Number.MAX_SAFE_INTEGER;
+		const totalCapacity = orderData.lsp_balance_sat + orderData.client_balance_sat;
+		
+		// If total exceeds max channel capacity, reduce lsp balance
+		if (totalCapacity > maxChannel) {
+			const minLsp = Math.max(0, minChannel - orderData.client_balance_sat);
+			orderData.lsp_balance_sat = Math.max(minLsp, maxChannel - orderData.client_balance_sat);
+		}
+		
+		// If total is below min channel capacity, increase lsp balance if possible
+		if (totalCapacity < minChannel) {
+			const neededLsp = minChannel - orderData.client_balance_sat;
+			const maxPossibleLsp = maxChannel - orderData.client_balance_sat;
+			orderData.lsp_balance_sat = Math.min(neededLsp, maxPossibleLsp);
+		}
+		
+		// Update the order request store
+		orderRequest.update(order => ({
+			...order,
+			lsp_balance_sat: orderData.lsp_balance_sat,
+			client_balance_sat: orderData.client_balance_sat
+		}));
+	}
+
 	// Reactive statement to sort ads when adsList or sort parameters change
 	$: {
 		if (sortColumn && adsList.length > 0) {
@@ -1402,13 +1486,14 @@
 								id="lsp_balance"
 								type="range" 
 								bind:value={orderData.lsp_balance_sat}
-								min={selectedAdInfo.min_channel_balance_sat}
-								max={selectedAdInfo.max_initial_lsp_balance_sat}
+								on:input={handleLspBalanceChange}
+								min={Math.max(0, (selectedAdInfo.min_channel_balance_sat || 0) - orderData.client_balance_sat)}
+								max={Math.max(0, (selectedAdInfo.max_channel_balance_sat || 0) - orderData.client_balance_sat)}
 								step="50000"
 								class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer dark:bg-gray-700 slider" />
 							<div class="flex justify-between text-xs text-muted-foreground">
-								<span>{formatBigNum(selectedAdInfo.min_channel_balance_sat)}</span>
-								<span>{formatBigNum(selectedAdInfo.max_initial_lsp_balance_sat)}</span>
+								<span>{formatBigNum(Math.max(0, (selectedAdInfo.min_channel_balance_sat || 0) - orderData.client_balance_sat))}</span>
+								<span>{formatBigNum(Math.max(0, (selectedAdInfo.max_channel_balance_sat || 0) - orderData.client_balance_sat))}</span>
 							</div>
 						</div>
 					</div>
@@ -1422,13 +1507,14 @@
 								id="client_balance"
 								type="range" 
 								bind:value={orderData.client_balance_sat}
-								min={selectedAdInfo.min_initial_client_balance_sat}
-								max={selectedAdInfo.max_initial_client_balance_sat}
+								on:input={handleClientBalanceChange}
+								min={Math.max(0, (selectedAdInfo.min_channel_balance_sat || 0) - orderData.lsp_balance_sat)}
+								max={Math.max(0, (selectedAdInfo.max_channel_balance_sat || 0) - orderData.lsp_balance_sat)}
 								step="1000"
 								class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer dark:bg-gray-700 slider" />
 							<div class="flex justify-between text-xs text-muted-foreground">
-								<span>{formatBigNum(selectedAdInfo.min_initial_client_balance_sat)}</span>
-								<span>{formatBigNum(selectedAdInfo.max_initial_client_balance_sat)}</span>
+								<span>{formatBigNum(Math.max(0, (selectedAdInfo.min_channel_balance_sat || 0) - orderData.lsp_balance_sat))}</span>
+								<span>{formatBigNum(Math.max(0, (selectedAdInfo.max_channel_balance_sat || 0) - orderData.lsp_balance_sat))}</span>
 							</div>
 						</div>
 					</div>
@@ -1509,6 +1595,11 @@
 						<div>
 							<span class="text-muted-foreground">Total Capacity:</span>
 							<span class="font-medium">{formatBigNum(orderData.lsp_balance_sat + orderData.client_balance_sat)} sats</span>
+							{#if selectedAdInfo}
+								{@const totalCapacity = orderData.lsp_balance_sat + orderData.client_balance_sat}
+								{@const minChannel = selectedAdInfo.min_channel_balance_sat || 0}
+								{@const maxChannel = selectedAdInfo.max_channel_balance_sat || Number.MAX_SAFE_INTEGER}
+							{/if}
 						</div>
 						<div>
 							<span class="text-muted-foreground">Expected Cost:</span>
@@ -1521,7 +1612,7 @@
 
 				<button 
 					type="submit"
-					disabled={isLoading || !orderData.target_pubkey_uri || !pubkeyValidation.isValid}
+					disabled={isLoading || !orderData.target_pubkey_uri || !pubkeyValidation.isValid || (selectedAdInfo && (orderData.lsp_balance_sat + orderData.client_balance_sat < (selectedAdInfo.min_channel_balance_sat || 0) || orderData.lsp_balance_sat + orderData.client_balance_sat > (selectedAdInfo.max_channel_balance_sat || Number.MAX_SAFE_INTEGER)))}
 					class="w-full py-3 px-4 bg-primary text-primary-foreground rounded-md hover:bg-primary/90 transition-colors disabled:opacity-50 flex items-center justify-center gap-2">
 					{#if isLoading}
 						<RefreshCw class="h-4 w-4 animate-spin" />
