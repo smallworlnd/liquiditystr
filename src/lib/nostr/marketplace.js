@@ -2,6 +2,21 @@ import { nostrClient } from './client.js';
 import pkg from '@rust-nostr/nostr-sdk';
 const { Tag, EventBuilder, Kind, PublicKey, loadWasmAsync } = pkg;
 
+// Order states
+export const ORDER_STATES = {
+    PENDING: 'PENDING',
+    PROCESSING: 'PROCESSING', 
+    COMPLETED: 'COMPLETED',
+    FAILED: 'FAILED'
+};
+
+// Channel states
+export const CHANNEL_STATES = {
+    PENDING: 'PENDING',
+    OPEN: 'OPEN',
+    CLOSED: 'CLOSED'
+};
+
 export class MarketplaceClient {
     constructor() {
         this.advertisements = new Map();
@@ -64,6 +79,10 @@ export class MarketplaceClient {
             lsp_pubkey: tagMap.get('lsp_pubkey'),
             fixed_cost_sats: parseInt(tagMap.get('fixed_cost_sats') || '0'),
             variable_cost_ppm: parseInt(tagMap.get('variable_cost_ppm') || '0'),
+            min_initial_client_balance_sat: parseInt(tagMap.get('min_initial_client_balance_sat') || '0'),
+            max_initial_client_balance_sat: parseInt(tagMap.get('max_initial_client_balance_sat') || '0'),
+            min_initial_lsp_balance_sat: parseInt(tagMap.get('min_initial_lsp_balance_sat') || '0'),
+            max_initial_lsp_balance_sat: parseInt(tagMap.get('max_initial_lsp_balance_sat') || '0'),
             min_channel_balance_sat: parseInt(tagMap.get('min_channel_balance_sat') || '0'),
             max_channel_balance_sat: parseInt(tagMap.get('max_channel_balance_sat') || '0'),
             max_channel_expiry_blocks: parseInt(tagMap.get('max_channel_expiry_blocks') || '0'),
@@ -222,7 +241,7 @@ export class MarketplaceClient {
     }
 
     isOrderResponse(tags) {
-        return (tags.order_id && tags.payment);
+        return ((tags.order_id && tags.payment) || (tags.code && tags.error_message));
     }
 
     isChannelUpdate(tags) {
@@ -231,13 +250,6 @@ export class MarketplaceClient {
     }
 
     async handleOrderResponse(rumorData, tags) {
-        const orderId = tags.order_id;
-        
-        if (!orderId) {
-            console.warn('Received order response without order_id');
-            return;
-        }
-
         // Parse the content JSON for payment details
         let contentData = {};
         try {
@@ -252,7 +264,7 @@ export class MarketplaceClient {
             // Error response
             const errorResponse = {
                 error_message: tags.error_message,
-                code: tags.code || 'unknown_error',
+                code: tags.code || 'unknown_error'
             };
             
             // Notify callback
@@ -272,8 +284,8 @@ export class MarketplaceClient {
 
             // Success response
             const orderResponse = {
-                order_id: orderId,
-                order_state: tags.order_state,
+                order_id: tags.order_id,
+                order_state: tags.order_state || ORDER_STATES.PROCESSING,
                 lsp_balance_sat: parseInt(tags.lsp_balance_sat || '0'),
                 client_balance_sat: parseInt(tags.client_balance_sat || '0'), 
                 channel_expiry_blocks: parseInt(tags.channel_expiry_blocks || '0'),

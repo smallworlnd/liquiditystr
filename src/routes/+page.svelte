@@ -1402,13 +1402,13 @@
 								id="lsp_balance"
 								type="range" 
 								bind:value={orderData.lsp_balance_sat}
-								min={selectedAdInfo.min_initial_lsp_balance_sat || 0}
-								max={selectedAdInfo.max_initial_lsp_balance_sat || selectedAdInfo.max_channel_balance_sat}
+								min={selectedAdInfo.min_channel_balance_sat}
+								max={selectedAdInfo.max_initial_lsp_balance_sat}
 								step="50000"
 								class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer dark:bg-gray-700 slider" />
 							<div class="flex justify-between text-xs text-muted-foreground">
-								<span>{formatBigNum(selectedAdInfo.min_initial_lsp_balance_sat || 0)}</span>
-								<span>{formatBigNum(selectedAdInfo.max_initial_lsp_balance_sat || selectedAdInfo.max_channel_balance_sat)}</span>
+								<span>{formatBigNum(selectedAdInfo.min_channel_balance_sat)}</span>
+								<span>{formatBigNum(selectedAdInfo.max_initial_lsp_balance_sat)}</span>
 							</div>
 						</div>
 					</div>
@@ -1422,13 +1422,13 @@
 								id="client_balance"
 								type="range" 
 								bind:value={orderData.client_balance_sat}
-								min={selectedAdInfo.min_initial_client_balance_sat || 0}
-								max={selectedAdInfo.max_initial_client_balance_sat || selectedAdInfo.max_channel_balance_sat}
+								min={selectedAdInfo.min_initial_client_balance_sat}
+								max={selectedAdInfo.max_initial_client_balance_sat}
 								step="1000"
 								class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer dark:bg-gray-700 slider" />
 							<div class="flex justify-between text-xs text-muted-foreground">
-								<span>{formatBigNum(selectedAdInfo.min_initial_client_balance_sat || 0)}</span>
-								<span>{formatBigNum(selectedAdInfo.max_initial_client_balance_sat || selectedAdInfo.max_channel_balance_sat)}</span>
+								<span>{formatBigNum(selectedAdInfo.min_initial_client_balance_sat)}</span>
+								<span>{formatBigNum(selectedAdInfo.max_initial_client_balance_sat)}</span>
 							</div>
 						</div>
 					</div>
