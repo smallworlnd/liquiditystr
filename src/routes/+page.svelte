@@ -1,9 +1,11 @@
 <script>
-	import { onMount } from 'svelte';
+	import { onMount, onDestroy } from 'svelte';
 	import { writable } from 'svelte/store';
 	import { Zap, RefreshCw, Send, Clock, CheckCircle, AlertCircle, Copy, QrCode, Github, ChevronDown, ChevronUp, HelpCircle } from 'lucide-svelte';
 	import QRCode from 'qrcode';
 	import { browser } from '$app/environment';
+	
+	import { marketplaceClient } from '$lib/nostr/marketplace.js';
 	
 	// Stores for application state
 	const ads = writable([]);
@@ -24,9 +26,9 @@
 	
 	// Session management
 	const sessionInfo = writable({
-		sessionId: null,
 		npub: null,
-		initialized: false
+		initialized: false,
+		pubkey: null
 	});
 	
 	// Current workflow step
@@ -49,9 +51,9 @@
 	let errorMessage = '';
 	let currentStep = 1;
 	let sessionData = {
-		sessionId: null,
 		npub: null,
-		initialized: false
+		initialized: false,
+		pubkey: null
 	};
 	let qrCodeDataUrl = '';
 	let isListeningForChannels = false;
@@ -69,16 +71,12 @@
 	let copiedTooltips = {};
 
 	// Popover state
-	let showOutboundPopover = false;
 	let showAdPopovers = {};
 
 	// Sorting state
 	let sortColumn = '';
 	let sortDirection = 'asc'; // 'asc' or 'desc'
 	let sortedAds = []; // Computed from adsList
-
-	// API base URL - same origin since frontend and backend are in same container
-	let API_BASE = '/api';
 
 	// Subscribe to stores
 	ads.subscribe(value => adsList = value);
@@ -92,59 +90,45 @@
 	sessionInfo.subscribe(value => sessionData = value);
 
 	onMount(async () => {
-		await initializeSession();
-		// Load ads without forcing refresh on initial load
-		await loadAds(false);
+		if (browser) {
+			await initializeNostrSession();
+		}
 	});
 
-	async function initializeSession() {
-		if (sessionData.initialized) return;
-		
-		try {
-			// Always call the backend to get/create a session
-			const response = await fetch(`${API_BASE}/session/`, {
-				method: 'GET',
-				headers: {
-					'Content-Type': 'application/json'
-				}
-			});
-			
-			if (response.ok) {
-				const sessionData = await response.json();
-				
-				const newSession = {
-					sessionId: sessionData.session_id,
-					npub: sessionData.nostr_pubkey,
-					initialized: true
-				};
-				
-				sessionInfo.set(newSession);
-				
-				// Store in localStorage for reuse
-				if (typeof localStorage !== 'undefined') {
-					localStorage.setItem('liquiditystr-session', JSON.stringify(newSession));
-				}
-				
-			} else {
-				throw new Error(`Failed to create session: ${response.status}`);
-			}
-		} catch (err) {
-			console.error('Failed to initialize session:', err);
-			error.set('Failed to initialize session: ' + err.message);
+	onDestroy(async () => {
+		if (browser && marketplaceClient) {
+			await marketplaceClient.disconnect();
 		}
-	}
+	});
 
-	function generateSessionId() {
-		return 'xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx'.replace(/[xy]/g, function(c) {
-			var r = Math.random() * 16 | 0, v = c == 'x' ? r : (r & 0x3 | 0x8);
-			return v.toString(16);
-		});
-	}
-
-	function generateTempNpub() {
-		// Generate a temporary npub-like string for testing
-		// In a real app, this would come from the user's Nostr keys
-		return 'npub1temp' + Math.random().toString(36).substring(2, 12);
+	async function initializeNostrSession(forceReinit = false) {
+		if (sessionData.initialized && !forceReinit) return;
+		
+		loading.set(true);
+		error.set('');
+		try {
+			await marketplaceClient.initialize();
+			
+			const pubkey = marketplaceClient.getPublicHexKey();
+			const npub = marketplaceClient.getNpub();
+			
+			const newSession = {
+				pubkey,
+				npub,
+				initialized: true
+			};
+			
+			sessionInfo.set(newSession);
+			
+			// Auto-load ads once the session is initialized
+			await loadAds();
+			
+		} catch (err) {
+			console.error('Failed to initialize Nostr session:', err);
+			error.set('Failed to initialize Nostr session: ' + err.message);
+		} finally {
+			loading.set(false);
+		}
 	}
 
 	async function generateQRCode(text) {
@@ -188,35 +172,14 @@
 		return invoice.substring(0, 20) + '...' + invoice.substring(invoice.length - 20);
 	}
 
-	function getApiHeaders() {
-		const headers = {
-			'Content-Type': 'application/json'
-		};
-		
-		// Add session headers if available - note the lowercase format
-		if (sessionData.sessionId) {
-			headers['session-id'] = sessionData.sessionId;
-		}
-		if (sessionData.npub) {
-			headers['npub'] = sessionData.npub;
-		}
-		
-		return headers;
-	}
-
-	async function loadAds(forceRefresh = true) {
+	async function loadAds() {
 		loading.set(true);
 		error.set('');
 		try {
-			// Only add refresh=true if explicitly requested
-			const refreshParam = forceRefresh ? '?refresh=true' : '';
-			const response = await fetch(`${API_BASE}/ads/list${refreshParam}`, {
-				headers: getApiHeaders()
-			});
-			if (!response.ok) throw new Error('Failed to fetch ads');
-			const data = await response.json();
-			ads.set(data.ads || []);
+			const advertisements = await marketplaceClient.fetchAdvertisements();
+			ads.set(advertisements);
 		} catch (err) {
+			console.error('Failed to load ads:', err);
 			error.set('Failed to load LSP advertisements: ' + err.message);
 		} finally {
 			loading.set(false);
@@ -225,14 +188,14 @@
 
 	async function selectAd(ad) {
 		selectedAd.set(ad);
-		// Set default values based on ad constraints and OrderSettings defaults
+		// Set default values based on ad constraints
 		orderRequest.update(order => ({
 			...order,
 			d: ad.d,
 			lsp_balance_sat: Math.max(order.lsp_balance_sat, ad.min_channel_balance_sat || 100000),
 			channel_expiry_blocks: ad.max_channel_expiry_blocks,
-			required_channel_confirmations: 0,  // OrderSettings default
-			funding_confirms_within_blocks: ad.min_funding_confirms_within_blocks    // OrderSettings default
+			required_channel_confirmations: 0,
+			funding_confirms_within_blocks: ad.min_funding_confirms_within_blocks || 2
 		}));
 		step.set(2);
 	}
@@ -244,278 +207,52 @@
 		error.set('');
 		
 		try {
-			const response = await fetch(`${API_BASE}/orders/create`, {
-				method: 'POST',
-				headers: getApiHeaders(),
-				body: JSON.stringify(orderData)
+			// Set up callbacks before submitting the order
+			marketplaceClient.onOrderResponse((response) => {
+				// Clear listening flag since we got a response
+				isListeningForChannels = false;
+				
+				// Generate QR code if we have an invoice
+				const invoice = response.payment?.bolt11?.invoice || response.bolt11_invoice;
+				if (invoice) {
+					generateQRCode(invoice).then(dataUrl => {
+						qrCodeDataUrl = dataUrl;
+					});
+				}
+				
+				// Update the store with the actual response
+				orderResponse.set(response);
+				step.set(3);
 			});
 			
-			if (!response.ok) {
-				const errorData = await response.json();
-				throw new Error(errorData.detail || 'Failed to create order');
+			// Set up callback for channel updates
+			marketplaceClient.onChannelUpdate((channelUpdate) => {
+				channelStatus.set(channelUpdate);
+				step.set(4);
+			});
+			
+			const orderSubmissionResult = await marketplaceClient.submitOrder(orderData);
+			
+			if (orderSubmissionResult?.status === 'submitted') {
+				// Show a temporary message that the order was submitted
+				orderResponse.set({
+					order_state: 'Submitted',
+					status: 'waiting_for_response',
+					...orderData
+				});
+				
+				// Set listening flag to show monitoring message
+				isListeningForChannels = true;
+				
+				step.set(3);
 			}
 			
-			const data = await response.json();
-			orderResponse.set(data);
-			
-			// Generate QR code for the invoice if available
-			let invoiceString = null;
-			
-			// Try multiple possible paths for the invoice
-			if (data.payment && data.payment.bolt11 && data.payment.bolt11.invoice) {
-				invoiceString = data.payment.bolt11.invoice;
-			} else if (data.payment && data.payment.bolt11 && data.payment.bolt11.bolt11_invoice) {
-				invoiceString = data.payment.bolt11.bolt11_invoice;
-			} else if (data.payment && data.payment.bolt11_invoice) {
-				invoiceString = data.payment.bolt11_invoice;
-			} else if (data.bolt11_invoice) {
-				invoiceString = data.bolt11_invoice;
-			} else if (data.payment && data.payment.invoice) {
-				invoiceString = data.payment.invoice;
-			}
-			
-			if (invoiceString) {
-				qrCodeDataUrl = await generateQRCode(invoiceString);
-			} else {
-				console.log('Full payment.bolt11 object:', data.payment?.bolt11);
-			}
-			
-			step.set(3);
-			
-			// Auto-start channel monitoring after a short delay to allow user to see the invoice
-			setTimeout(() => {
-				startChannelMonitoring();
-			}, 1000);
 		} catch (err) {
+			console.error('Failed to submit order:', err);
 			error.set('Failed to submit order: ' + err.message);
 		} finally {
 			loading.set(false);
 		}
-	}
-
-	async function startChannelMonitoring() {
-		if (isListeningForChannels) {
-			return; // Already listening
-		}
-		
-		if (!sessionData.initialized) {
-			error.set('Session not initialized for channel monitoring');
-			return;
-		}
-		
-		isListeningForChannels = true;
-		await listenForChannelUpdates();
-	}
-
-	async function listenForChannelUpdates() {
-		
-		try {
-			const response = await fetch(`${API_BASE}/channels/listen-status`, {
-				headers: getApiHeaders()
-			});
-
-			if (!response.ok) {
-				console.error('Failed to start channel status stream:', response.status, response.statusText);
-				isListeningForChannels = false;
-				
-				// Try fallback polling if stream fails
-				startPollingForChannelStatus();
-				return;
-			}
-
-			const reader = response.body.getReader();
-			const decoder = new TextDecoder();
-			let buffer = '';
-			let heartbeatCount = 0;
-			let lastDataTime = Date.now();
-			
-			// Set up a timeout to detect if stream is stalled
-			const staleCheckInterval = setInterval(() => {
-				const timeSinceLastData = Date.now() - lastDataTime;
-				if (timeSinceLastData > 30000) { // 30 seconds without data
-					clearInterval(staleCheckInterval);
-					reader.cancel();
-					startPollingForChannelStatus();
-					return;
-				}
-			}, 10000); // Check every 10 seconds
-			
-			while (true) {
-				const { value, done } = await reader.read();
-				if (done) {
-					clearInterval(staleCheckInterval);
-					isListeningForChannels = false;
-					break;
-				}
-				
-				// Decode the chunk and add to buffer
-				lastDataTime = Date.now(); // Update last data time
-				const chunk = decoder.decode(value, { stream: true });
-				buffer += chunk;
-				
-				// Try to parse JSON objects from the buffer
-				// Each JSON object should be on its own "line" but may be concatenated
-				let jsonStart = 0;
-				let braceCount = 0;
-				let inString = false;
-				let escaped = false;
-				
-				for (let i = 0; i < buffer.length; i++) {
-					const char = buffer[i];
-					
-					if (escaped) {
-						escaped = false;
-						continue;
-					}
-					
-					if (char === '\\') {
-						escaped = true;
-						continue;
-					}
-					
-					if (char === '"') {
-						inString = !inString;
-						continue;
-					}
-					
-					if (!inString) {
-						if (char === '{') {
-							braceCount++;
-						} else if (char === '}') {
-							braceCount--;
-							
-							// Found a complete JSON object
-							if (braceCount === 0) {
-								const jsonStr = buffer.substring(jsonStart, i + 1);
-								
-								try {
-									const channelData = JSON.parse(jsonStr);
-									console.log('Parsed channel data:', channelData);
-									
-									// Smart update: preserve important data from previous updates
-									channelStatus.update(prevData => {
-										// If we don't have previous data, use the new data as-is
-										if (!prevData) {
-											return channelData;
-										}
-										
-										// Merge new data with previous data, preserving important fields
-										const merged = {
-											...prevData,
-											...channelData
-										};
-										
-										// Preserve specific fields if they exist in previous data but are missing in new data
-										if (prevData.txid_hex && !channelData.txid_hex) {
-											merged.txid_hex = prevData.txid_hex;
-										}
-										if (prevData.output_index !== undefined && channelData.output_index === undefined) {
-											merged.output_index = prevData.output_index;
-										}
-										
-										return merged;
-									});
-									
-									// Check if we have a channel_state (not just heartbeat)
-									if (channelData.channel_state) {
-										console.log('Channel state update:', channelData.channel_state);
-										
-										// For the first channel update (PENDING), move to step 4
-										if (channelData.channel_state === 'PENDING' && currentStep !== 4) {
-											console.log('Channel PENDING received! Moving to step 4');
-											console.log('Current step before update:', currentStep);
-											
-											// Use setTimeout to ensure the step update happens in the next tick
-											setTimeout(() => {
-												step.set(4);
-												console.log('Step updated to 4');
-											}, 100);
-										}
-										
-										// If channel is OPEN, we can end the stream
-										if (channelData.channel_state === 'OPEN') {
-											console.log('Channel OPEN received! Ending stream');
-											clearInterval(staleCheckInterval);
-											isListeningForChannels = false;
-											return; // Exit the stream only when OPEN
-										}
-									}
-								} catch (parseError) {
-									heartbeatCount++;
-								}
-								
-								// Move to start of next JSON object
-								jsonStart = i + 1;
-							}
-						}
-					}
-				}
-				
-				// Remove processed JSON objects from buffer
-				buffer = buffer.substring(jsonStart);
-			}
-		} catch (err) {
-			console.error('Channel status stream error:', err);
-			error.set('Failed to listen for channel updates: ' + err.message);
-			isListeningForChannels = false;
-			
-			// Try fallback polling if stream fails
-			startPollingForChannelStatus();
-		}
-	}
-
-	// Fallback polling mechanism
-	let pollingInterval = null;
-	
-	async function startPollingForChannelStatus() {
-		if (pollingInterval) return; // Already polling
-		
-		pollingInterval = setInterval(async () => {
-			try {
-				const response = await fetch(`${API_BASE}/channels/status`, {
-					headers: getApiHeaders()
-				});
-				
-				if (response.ok) {
-					const channelData = await response.json();
-					console.log('Polled channel status:', channelData);
-					
-					// Smart update: preserve important data from previous updates (same as streaming)
-					channelStatus.update(prevData => {
-						// If we don't have previous data, use the new data as-is
-						if (!prevData) {
-							return channelData;
-						}
-						
-						// Merge new data with previous data, preserving important fields
-						const merged = {
-							...prevData,
-							...channelData
-						};
-						
-						// Preserve specific fields if they exist in previous data but are missing in new data
-						if (prevData.txid_hex && !channelData.txid_hex) {
-							merged.txid_hex = prevData.txid_hex;
-						}
-						if (prevData.output_index !== undefined && channelData.output_index === undefined) {
-							merged.output_index = prevData.output_index;
-						}
-						
-						return merged;
-					});
-					
-					if (channelData.channel_state === 'OPEN') {
-						console.log('Channel opened via polling! Moving to step 4');
-						step.set(4);
-						clearInterval(pollingInterval);
-						pollingInterval = null;
-						isListeningForChannels = false;
-					}
-				}
-			} catch (err) {
-				console.error('Polling error:', err);
-			}
-		}, 5000); // Poll every 5 seconds
 	}
 
 	function formatBigNum(amount) {
@@ -527,7 +264,6 @@
 		if (millions >= 1) {
 			return `${millions.toFixed(2)}`;
 		} else {
-			// For values less than 1M, still show in M but with more decimals if needed
 			return `${millions.toFixed(3)}`;
 		}
 	}
@@ -535,11 +271,10 @@
 	function getResponsiveText(text, screenSize = 'large') {
 		if (!text) return 'N/A';
 		
-		// Define character limits based on screen size
 		const limits = {
-			small: 12,   // Mobile screens - show first 6 + last 6 characters
-			medium: 20,  // Tablet screens - show first 10 + last 10 characters  
-			large: 9999  // Desktop screens - show full text
+			small: 12,
+			medium: 20,
+			large: 9999
 		};
 		
 		const limit = limits[screenSize] || limits.large;
@@ -548,13 +283,8 @@
 			return text;
 		}
 		
-		// For small/medium screens, show first and last parts
 		const halfLimit = Math.floor(limit / 2);
 		return `${text.slice(0, halfLimit)}...${text.slice(-halfLimit)}`;
-	}
-
-	function getTotalCapacity() {
-		return orderData.lsp_balance_sat + orderData.client_balance_sat;
 	}
 
 	function resetWorkflow() {
@@ -575,11 +305,8 @@
 		qrCodeDataUrl = '';
 		isListeningForChannels = false;
 		
-		// Clear any polling
-		if (pollingInterval) {
-			clearInterval(pollingInterval);
-			pollingInterval = null;
-		}
+		// Clear any pending callbacks
+		marketplaceClient.removeOrderCallback();
 		
 		// Reset validation
 		pubkeyValidation = {
@@ -666,7 +393,7 @@
 		let hostValid = false;
 		if (ipv4Regex.test(cleanHost)) {
 			hostValid = true;
-		} else if (ipv6Regex.test(host)) {  // Use original host for IPv6 (may have brackets)
+		} else if (ipv6Regex.test(host)) {
 			hostValid = true;
 		} else if (onionRegex.test(cleanHost)) {
 			hostValid = true;
@@ -705,19 +432,20 @@
 		validatePubkeyUri(orderData.target_pubkey_uri);
 	}
 
-	function clearSession() {
-		if (typeof localStorage !== 'undefined') {
-			localStorage.removeItem('liquiditystr-session');
-		}
+	async function clearSession() {
+		// Disconnect to ensure clean state for new keys
+		await marketplaceClient.disconnect();
+		// Reset session state
 		sessionInfo.set({
-			sessionId: null,
 			npub: null,
-			initialized: false
+			initialized: false,
+			pubkey: null
 		});
-		// Reset all state
+		ads.set([]);
+		// Reset workflow
 		resetWorkflow();
-		// Reinitialize
-		initializeSession();
+		// Force reinitialize with new keys
+		await initializeNostrSession(true);
 	}
 
 	function toggleFAQ(index) {
@@ -883,7 +611,7 @@
 		<div class="bg-yellow-500/10 border border-yellow-500/20 rounded-md p-3 mb-6 flex items-center gap-2">
 			<RefreshCw class="h-4 w-4 text-yellow-500 animate-spin" />
 			<p class="text-yellow-700 dark:text-yellow-300 text-sm">
-				Initializing session...
+				Connecting to Nostr relays...
 			</p>
 		</div>
 	{/if}
@@ -919,7 +647,7 @@
 				<h2 class="text-xl font-semibold">Select an LSP</h2>
 				<button 
 					on:click={loadAds}
-					disabled={isLoading}
+					disabled={isLoading || !sessionData.initialized}
 					class="flex items-center text-sm gap-2 px-1 py-1 bg-background border rounded-md hover:bg-accent transition-colors disabled:opacity-50">
 					<RefreshCw class="h-4 w-4 {isLoading ? 'animate-spin' : ''}" />
 					Refresh
@@ -1728,79 +1456,10 @@
 					</div>
 
 					<div class="grid grid-cols-2 gap-4">
-            {#if false}
 						<div>
-							<div class="relative mb-2">
-								<div class="flex items-center gap-2 text-sm font-medium">
-									<label for="funding_confirms_within_blocks">
-										Confirms in {orderData.funding_confirms_within_blocks} block{orderData.funding_confirms_within_blocks == 1 ? '' : 's'}
-									</label>
-									<button
-										type="button"
-										on:click={() => toggleAdPopover('form', 'funding_confirms')}
-										class="p-1 hover:bg-accent rounded-full transition-colors"
-										title="Funding confirmation info"
-									>
-										<HelpCircle class="h-3 w-3 text-muted-foreground" />
-									</button>
-								</div>
-								{#if showAdPopovers['form-funding_confirms']}
-									<!-- svelte-ignore a11y-click-events-have-key-events -->
-									<!-- svelte-ignore a11y-no-static-element-interactions -->
-									<div 
-										class="fixed inset-0 z-40" 
-										on:click={() => toggleAdPopover('form', 'funding_confirms')}
-									></div>
-									<div class="absolute left-0 top-8 z-50 w-64 bg-background border border-border rounded-lg shadow-lg p-3 text-xs">
-										<p class="font-medium mb-1">Funding Confirmation Time</p>
-										<p class="text-muted-foreground">This sets target number of blocks within which the channel funding transaction should be confirmed. Lower values mean faster confirmation but may require higher transaction fees during busy periods. <strong>The min value is 2 which means the transaction is likely to be confirmed the fastest</strong>.</p>
-									</div>
-								{/if}
-							</div>
-							<div class="space-y-2">
-								<input 
-									id="funding_confirms_within_blocks"
-									type="range" 
-									bind:value={orderData.funding_confirms_within_blocks}
-									min={selectedAdInfo.min_funding_confirms_within_blocks}
-									max="50"
-									step="1"
-									class="w-full h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer dark:bg-gray-700 slider" />
-								<div class="flex justify-between text-xs text-muted-foreground">
-									<span>{selectedAdInfo.min_funding_confirms_within_blocks} blocks</span>
-									<span>50 blocks</span>
-								</div>
-							</div>
-						</div>
-            {/if}
-						<div>
-							<div class="relative mb-2">
-								<div class="flex items-center gap-2 text-sm font-medium">
-									<label for="announce_channel">
-										Channel Announcement
-									</label>
-									<button
-										type="button"
-										on:click={() => toggleAdPopover('form', 'channel_announcement')}
-										class="p-1 hover:bg-accent rounded-full transition-colors"
-										title="Channel announcement info"
-									>
-										<HelpCircle class="h-3 w-3 text-muted-foreground" />
-									</button>
-								</div>
-								{#if showAdPopovers['form-channel_announcement']}
-									<!-- svelte-ignore a11y-click-events-have-key-events -->
-									<!-- svelte-ignore a11y-no-static-element-interactions -->
-									<div 
-										class="fixed inset-0 z-40" 
-										on:click={() => toggleAdPopover('form', 'channel_announcement')}
-									></div>
-									<div class="absolute left-0 top-8 z-50 w-64 bg-background border border-border rounded-lg shadow-lg p-3 text-xs">
-										<p class="font-medium mb-1">Channel Announcement</p>
-										<p class="text-muted-foreground">Public channels are announced in Lightning Network gossip. Private channels are not announced and won't appear in the graph.</p>
-									</div>
-								{/if}
-							</div>
+							<label for="announce_channel" class="block text-sm font-medium mb-2">
+								Channel Announcement
+							</label>
 							<div class="space-y-2">
 								<div class="flex items-center space-x-3 py-3">
 									<button 
@@ -1842,7 +1501,6 @@
 							{pubkeyValidation.message}
 						</div>
 					{/if}
-					
 				</div>
 
 				<div class="bg-background border rounded-lg p-4">
@@ -1924,7 +1582,7 @@
 						<span class="ml-2 font-medium">{formatBigNum(orderResult.channel_expiry_blocks || 0)} blocks</span>
 					</div>
 					<div>
-						<span class="text-muted-foreground">Public Channel:</span>
+						<span class="text-muted-foreground">Public Channel</span>
 						<span class="ml-2 font-medium">{orderResult.announce_channel ? 'Yes' : 'No'}</span>
 					</div>
 				</div>
@@ -2004,6 +1662,15 @@
 										Listening for payment confirmation from the LSP
 									</span>
 								{/if}
+							</p>
+						</div>
+					{:else if orderResult?.status === 'waiting_for_response'}
+						<!-- Loading state while waiting for LSP response -->
+						<div class="flex flex-col items-center justify-center py-12">
+							<RefreshCw class="h-8 w-8 animate-spin text-primary mb-4" />
+							<p class="text-sm text-muted-foreground text-center">
+								Waiting for LSP to process your order...<br>
+								<span class="text-xs">This usually takes a few seconds</span>
 							</p>
 						</div>
 					{:else}
@@ -2099,7 +1766,7 @@
 				},
 				{
 					question: "How are the costs calculated?",
-					answer: "LSPs can choose to apply a flat fee in sats to the order, and they can choose to apply a variable fee in parts per million (ppm) as a function of channel capacity. Adding an amount of outbound liquidity will be included in the cost of the purchase. What you see is what you get. Liquiditystr doesn't take a cut because it's just a gateway that connects to Nostr relays to fetch ads and transmit NIP-17 DMs."
+					answer: "LSPs can choose to apply a flat fee in sats to the order, and they can choose to apply a variable fee in parts per million (ppm) as a function of channel capacity. Adding an amount of outbound liquidity will be included in the cost of the purchase. What you see is what you get. Liquiditystr doesn't take a cut because it's just a gateway for your browser to connect to Nostr relays, fetch ads, and transmit NIP-17 DMs (powered by <a class='text-white' target='_blank' href='https://rust-nostr.org'>rust-nostr</a>)."
 				},
 				{
 					question: "How long does it take to open a channel?",
@@ -2107,15 +1774,15 @@
 				},
 				{
 					question: "How do I advertise liquidity?",
-          answer: "You can run free and open-source software like <a class='text-white' target='_blank' href='https://github.com/smallworlnd/publsp'>publsp</a> to post your offer to Nostr, or you can write your own implementation the same event kind and structure to create the same order flow. Either way, your ad will automatically get picked up by liquiditystr."
+					answer: "You can run free and open-source software like <a class='text-white' target='_blank' href='https://github.com/smallworlnd/publsp'>publsp</a> to post your offer to Nostr, or you can write your own implementation the same event kind and structure to create the same order flow. Either way, your ad will automatically get picked up by liquiditystr."
 				},
 				{
 					question: "What's the trust model?",
-          answer: "The current iteration of the Nostr P2P liquidity marketplace is based off the <a class='text-white' target='_blank' href='https://github.com/lightning/blips/blob/master/blip-0051.md'>bLIP51</a> spec, so the same trust model applies; the client pays the LSP first (hodl invoice) then receives, so the risk is that you pay and don't receive. LSP reputation is on the line so bad behavior could generally be disincentivized."
+					answer: "The current iteration of the Nostr P2P liquidity marketplace is based off the <a class='text-white' target='_blank' href='https://github.com/lightning/blips/blob/master/blip-0051.md'>bLIP51</a> spec, so the same trust model applies; the client pays the LSP first (hodl invoice) then receives, so the risk is that you pay and don't receive. LSP reputation is on the line so bad behavior could generally be disincentivized."
 				},
 				{
-					question: "Is there an API?",
-          answer: "Have a look <a class='text-white' target='_blank' href='/api/docs'>here</a> or <a class='text-white' target='_blank' href='/api/redoc'>here</a>. The backend is implemented in <a class='text-white' target='_blank' href='https://github.com/smallworlnd/publsp'>publsp</a>."
+					question: "Can I run/host liquiditystr myself?",
+					answer: "Yes! Have a look at the <a class='text-white' target='_blank' href='https://github.com/smallworlnd/liquiditystr'>source code</a>. You can just run it locally or on your own server. Might as well modify it to your liking while you're at it."
 				},
 			] as faq, index}
 				<div class="border border-border rounded-lg">

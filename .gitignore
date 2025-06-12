@@ -11,7 +11,6 @@ node_modules
 *.swp
 
 .goose*
-nostr-keys.json
 .ipython
 .git
 .pre*
@@ -35,7 +34,7 @@ dist/
 downloads/
 eggs/
 .eggs/
-lib/
+#lib/
 lib64/
 parts/
 sdist/
