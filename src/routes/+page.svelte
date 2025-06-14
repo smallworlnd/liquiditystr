@@ -1833,7 +1833,7 @@
 				{#if channelResult && channelResult.channel_state === 'OPEN'}
 					Your Lightning channel is now active and ready to use!
 				{:else}
-					Your payment has been received! The LSP has submitted the opening transaction to the mempool.
+					The LSP has submitted the opening transaction to the mempool and will release the hold on your payment upon channel confirmation
 				{/if}
 			</p>
 		</div>

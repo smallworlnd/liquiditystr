@@ -250,16 +250,6 @@ export class MarketplaceClient {
     }
 
     async handleOrderResponse(rumorData, tags) {
-        // Parse the content JSON for payment details
-        let contentData = {};
-        try {
-            if (rumorData.content) {
-                contentData = JSON.parse(rumorData.content);
-            }
-        } catch (err) {
-            console.warn('Failed to parse order response content:', err);
-        }
-
         if (tags.error_message) {
             // Error response
             const errorResponse = {
@@ -301,15 +291,26 @@ export class MarketplaceClient {
     }
 
     async handleChannelUpdate(rumorData, tags) {
-        const channelUpdate = {
-            channel_state: tags.channel_state,
-            txid_hex: tags.txid_hex,
-            output_index: parseInt(tags.output_index || '0')
-        };
-        
-        // Notify callback
-        if (this.channelUpdateCallback) {
-            this.channelUpdateCallback(channelUpdate);
+        if (tags.channel_state == "PENDING" || tags.channel_state == "OPEN") {
+            const channelUpdate = {
+                channel_state: tags.channel_state,
+                txid_hex: tags.txid_hex,
+                output_index: parseInt(tags.output_index || '0')
+            };
+            // Notify callback
+            if (this.channelUpdateCallback) {
+                this.channelUpdateCallback(channelUpdate);
+            }
+        } else {
+            // Error response
+            const errorResponse = {
+                error_message: tags.error_message
+            };
+
+            // Notify callback
+            if (this.channelUpdateCallback) {
+                this.channelUpdateCallback(errorResponse);
+            }
         }
     }
 
