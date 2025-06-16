@@ -101,29 +101,36 @@ export class NostrClientWrapper {
             
             const eventsArray = [];
             events.forEach((e) => {
-                // 1) does ad have every required tag?
-                // 2) drop inactive/ads with no lsp pubkey
                 const adTags = e.tags.toVec().map(tag => tag.kind());
                 const adTagsVerified = adTags.every(tag => REQ_AD_TAGS.includes(tag))
                 const lspPubkey = e.tags.find('lsp_pubkey').content()
-                const adStatus = e.tags.find('status').content()
-                if (adTagsVerified && adStatus == 'active' && lspPubkey) {
-                  eventsArray.push(e);
+                if (adTagsVerified && lspPubkey) {
+                    // 1) does ad have every required tag?
+                    // 2) drop ads with no lsp pubkey
+                    eventsArray.push(e);
                 }
             });
-            // 3) group by lsp_pubkey and pick the newest per group
+
             const latestByLSP = eventsArray.reduce((map, ev) => {
                 const lspPubkey = ev.tags.find('lsp_pubkey').content();
                 const timeSecs  = ev.createdAt.asSecs();
 
                 const prev = map.get(lspPubkey);
-                // if we’ve never seen this LSP, or this event is newer, store it
+                // 3) if we’ve never seen this LSP, or this event is newer, store it
                 if (!prev || timeSecs > prev.createdAt.asSecs()) {
                     map.set(lspPubkey, ev);
                 }
                 return map;
             }, new Map());
-            const filteredEvents = Array.from(latestByLSP.values());
+
+            // 4) filter out reduced set of ads for only active ones
+            const filteredActiveAds = new Map(
+                [...latestByLSP].filter(([pubkey, ev]) =>
+                    ev.tags.find('status')?.content() === 'active'
+                )
+            );
+
+            const filteredEvents = Array.from(filteredActiveAds.values());
             
             return filteredEvents;
         } catch (error) {
