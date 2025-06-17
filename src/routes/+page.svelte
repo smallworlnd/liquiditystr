@@ -58,6 +58,9 @@
 	let qrCodeDataUrl = '';
 	let isListeningForChannels = false;
 
+	// Timeout handling
+	let orderTimeout = null;
+
 	// Validation state
 	let pubkeyValidation = {
 		isValid: false,
@@ -78,6 +81,9 @@
 	let sortDirection = 'asc'; // 'asc' or 'desc'
 	let sortedAds = []; // Computed from adsList
 
+	// Cost overview slider
+	let costOverviewCapacity = 5000000; // Default 5M sats
+
 	// Subscribe to stores
 	ads.subscribe(value => adsList = value);
 	selectedAd.subscribe(value => selectedAdInfo = value);
@@ -96,6 +102,12 @@
 	});
 
 	onDestroy(async () => {
+		// Clear any existing timeout
+		if (orderTimeout) {
+			clearTimeout(orderTimeout);
+			orderTimeout = null;
+		}
+		
 		if (browser && marketplaceClient) {
 			await marketplaceClient.disconnect();
 		}
@@ -207,8 +219,20 @@
 		error.set('');
 		
 		try {
+			// Clear any existing timeout
+			if (orderTimeout) {
+				clearTimeout(orderTimeout);
+				orderTimeout = null;
+			}
+			
 			// Set up callbacks before submitting the order
 			marketplaceClient.onOrderResponse((response) => {
+				// Clear timeout since we got a response
+				if (orderTimeout) {
+					clearTimeout(orderTimeout);
+					orderTimeout = null;
+				}
+				
 				// Clear listening flag since we got a response
 				isListeningForChannels = false;
 				
@@ -243,6 +267,21 @@
 				
 				// Set listening flag to show monitoring message
 				isListeningForChannels = true;
+				
+				// Set up 10-second timeout
+				orderTimeout = setTimeout(() => {
+					// Clear the timeout reference
+					orderTimeout = null;
+					
+					// Clear listening flag
+					isListeningForChannels = false;
+					
+					// Set timeout error message
+					error.set('Timeout waiting for LSP response. The LSP may be offline or there may be issues with relay connections. Please try again later.');
+					
+					// Reset to step 2 so user can try again
+					step.set(2);
+				}, 10000);
 				
 				step.set(3);
 			}
@@ -288,6 +327,12 @@
 	}
 
 	function resetWorkflow() {
+		// Clear any existing timeout
+		if (orderTimeout) {
+			clearTimeout(orderTimeout);
+			orderTimeout = null;
+		}
+		
 		selectedAd.set(null);
 		orderRequest.set({
 			lsp_balance_sat: 100000,
@@ -484,6 +529,8 @@
 				return ad.fixed_cost_sats || 0;
 			case 'variable_cost':
 				return ad.variable_cost_ppm || 0;
+			case 'total_lease_cost':
+				return calculateTotalLeaseCost(ad, costOverviewCapacity);
 			case 'max_base_fee':
 				return ad.max_promised_base_fee || 0;
 			case 'max_fee_rate':
@@ -503,6 +550,28 @@
 			default:
 				return 0;
 		}
+	}
+
+	// Function to calculate total lease cost for the cost overview
+	function calculateTotalLeaseCost(ad, capacity) {
+		if (!ad) return 0;
+		
+		const fixedCost = ad.fixed_cost_sats || 0;
+		const variableCost = ad.variable_cost_ppm || 0;
+		const maxDuration = ad.max_channel_expiry_blocks || 1;
+		
+		// Variable cost calculation: (capacity * variable_ppm / 1,000,000) * duration_ratio
+		const variableCostSats = Math.round((capacity * variableCost / 1000000) * (maxDuration / maxDuration));
+		
+		return fixedCost + variableCostSats;
+	}
+
+	// Function to check if capacity is within LSP limits
+	function isCapacityInRange(ad, capacity) {
+		if (!ad) return true;
+		const min = ad.min_channel_balance_sat || 0;
+		const max = ad.max_channel_balance_sat || Number.MAX_SAFE_INTEGER;
+		return capacity >= min && capacity <= max;
 	}
 
 	// Helper functions for constrained sliders
@@ -604,6 +673,23 @@
 			});
 		} else {
 			sortedAds = [...adsList];
+		}
+	}
+
+	// Reactive statement to update sorted ads when cost overview capacity changes
+	$: if (costOverviewCapacity && sortColumn === 'total_lease_cost') {
+		// Re-trigger sorting when capacity changes and we're sorting by total lease cost
+		if (sortedAds.length > 0) {
+			sortedAds = [...sortedAds].sort((a, b) => {
+				const aVal = getSortValue(a, sortColumn);
+				const bVal = getSortValue(b, sortColumn);
+				
+				let comparison = 0;
+				if (aVal < bVal) comparison = -1;
+				else if (aVal > bVal) comparison = 1;
+				
+				return sortDirection === 'asc' ? comparison : -comparison;
+			});
 		}
 	}
 </script>
@@ -728,14 +814,25 @@
 	{#if currentStep === 1}
 		<div class="bg-secondary/50 rounded-xl border p-6">
 			<div class="flex items-center justify-between mb-4">
-				<h2 class="text-xl font-semibold">Select an LSP</h2>
-				<button 
-					on:click={loadAds}
-					disabled={isLoading || !sessionData.initialized}
-					class="flex items-center text-sm gap-2 px-1 py-1 bg-background border rounded-md hover:bg-accent transition-colors disabled:opacity-50">
-					<RefreshCw class="h-4 w-4 {isLoading ? 'animate-spin' : ''}" />
-					Refresh
-				</button>
+				<h2 class="text-xl font-semibold">Select a LSP</h2>
+				<div class="flex flex-col items-end gap-1">
+					<div class="flex items-center gap-2">
+						<input 
+							id="cost-overview-slider"
+							type="range" 
+							bind:value={costOverviewCapacity}
+							min="1000000"
+							max="20000000"
+							step="1000000"
+							class="w-24 h-2 bg-gray-200 rounded-lg appearance-none cursor-pointer dark:bg-gray-700 slider" />
+						<span class="text-sm font-medium min-w-max">
+							{formatCapacity(costOverviewCapacity)}M
+						</span>
+					</div>
+					<label for="cost-overview-slider" class="text-xs text-right text-muted-foreground">
+						Get a quick inbound channel cost comparison
+					</label>
+				</div>
 			</div>
 
 			{#if isLoading}
@@ -787,7 +884,7 @@
 								</th>
 								
 								<!-- Costs Group -->
-								<th colspan="4" class="text-center p-2 border-b border-l border-border/40 font-semibold text-xs text-muted-foreground">
+								<th colspan="5" class="text-center p-2 border-b border-l border-border/40 font-semibold text-xs text-muted-foreground">
 										<div class="relative">
                       <span>Channel Costs</span>
 											<button
@@ -805,9 +902,9 @@
 													class="fixed inset-0 z-40" 
 													on:click={() => toggleAdPopover('header', 'costs')}
 												></div>
-												<div class="absolute left-0 top-8 z-50 w-64 bg-background border border-border rounded-lg shadow-lg p-3 text-xs">
+												<div class="absolute left-0 top-8 z-55 w-64 bg-background border border-border rounded-lg shadow-lg p-3 text-xs">
 													<p class="font-medium mb-1">Channel Costs</p>
-													<p class="text-muted-foreground">Channel price is determined by the variable cost in ppm of the desired capacity, the flat fee regardless of capacity, and the desired lease duration. The Min & Max APR% values are expected rates if you purchased a channel with the LSP's Min & Max capacity, respectively, for the maximum lease duration.</p>
+													<p class="text-muted-foreground">Channel price is determined by the variable cost in ppm of the desired capacity, the flat fee regardless of capacity, and the desired lease duration. The Min & Max APR% values are expected rates if you purchased a channel with the LSP's Min & Max capacity, respectively, for the maximum lease duration. The inbound channel cost is calculated on the amount in the slider above.</p>
 												</div>
 											{/if}
 										</div>
@@ -957,6 +1054,29 @@
 													<ChevronDown class="h-3 w-3 text-primary -mt-1" />
 												{:else}
 													<ChevronDown class="h-2 w-3 {sortColumn === 'max_lease_time' ? 'opacity-30' : 'opacity-40'} -mt-1" />
+												{/if}
+											</div>
+										</button>
+									</div>
+								</th>
+
+								<!-- Total Lease Cost Column -->
+								<th class="text-center p-4 border-b border-border font-semibold text-sm min-w-32">
+									<div class="flex items-center justify-center gap-2">
+										<button 
+											on:click={() => sortAds('total_lease_cost')}
+											class="flex items-center gap-1 hover:text-primary transition-colors group">
+											<span class="text-muted-foreground text-xs">Inbound Cost Comparison ({formatCapacity(costOverviewCapacity)}M sat)</span>
+											<div class="flex flex-col h-4 w-3 opacity-60 group-hover:opacity-100">
+												{#if sortColumn === 'total_lease_cost' && sortDirection === 'asc'}
+													<ChevronUp class="h-3 w-3 text-primary" />
+												{:else}
+													<ChevronUp class="h-2 w-3 {sortColumn === 'total_lease_cost' ? 'opacity-30' : 'opacity-40'}" />
+												{/if}
+												{#if sortColumn === 'total_lease_cost' && sortDirection === 'desc'}
+													<ChevronDown class="h-3 w-3 text-primary -mt-1" />
+												{:else}
+													<ChevronDown class="h-2 w-3 {sortColumn === 'total_lease_cost' ? 'opacity-30' : 'opacity-40'} -mt-1" />
 												{/if}
 											</div>
 										</button>
@@ -1245,6 +1365,13 @@
 											{/if}
 										</div>
 									</td>
+
+									<!-- Inbound Lease Cost -->
+									<td class="p-4 text-center border-r border-border/40">
+										<div class="font-medium text-sm text-foreground">
+											{formatBigNum(calculateTotalLeaseCost(ad, costOverviewCapacity))}
+										</div>
+									</td>
 									
 									<!-- Fixed Cost -->
 									<td class="p-4 text-center border-r border-border/40">
@@ -1352,7 +1479,7 @@
 								<!-- Value proposition subsection row (spans full table width) -->
 								{#if ad.value_prop}
 									<tr class="hover:bg-accent/30 transition-colors border-b border-border">
-										<td colspan="10" class="px-4 py-3 pt-0">
+										<td colspan="15" class="px-4 py-3 pt-0">
 											<div class="flex items-center gap-3">
 												<button 
 													on:click={() => selectAd(ad)}
@@ -1368,7 +1495,7 @@
 								{:else}
 									<!-- If no value_prop, create a minimal row just for the Select button -->
 									<tr class="hover:bg-accent/30 transition-colors border-b border-border">
-										<td colspan="10" class="px-4 py-2">
+										<td colspan="15" class="px-4 py-2">
 											<div class="flex items-center">
 												<button 
 													on:click={() => selectAd(ad)}
@@ -1384,6 +1511,15 @@
 					</table>
 				</div>
 			{/if}
+			<div class="flex justify-end mt-2">
+				<button 
+					on:click={loadAds}
+					disabled={isLoading || !sessionData.initialized}
+					class="flex items-center text-sm gap-2 px-1 py-1 bg-background border rounded-md hover:bg-accent transition-colors disabled:opacity-50">
+					<RefreshCw class="h-4 w-4 {isLoading ? 'animate-spin' : ''}" />
+					Refresh
+				</button>
+			</div>
 		</div>
 	{/if}
 
