@@ -6,6 +6,14 @@ export default defineConfig({
 	optimizeDeps: {
 		include: ['@rust-nostr/nostr-sdk']
 	},
+	define: {
+		global: 'globalThis',
+	},
+	resolve: {
+		alias: {
+			buffer: 'buffer',
+		},
+	},
 	server: {
 		headers: {
 			'Cross-Origin-Embedder-Policy': 'credentialless',

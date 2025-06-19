@@ -1,3 +1,5 @@
+import { writable } from 'svelte/store';
+import { verifyMessage } from "ln-verifymessagejs";
 import pkg from '@rust-nostr/nostr-sdk';
 const { 
     Client, 
@@ -14,13 +16,11 @@ const {
     PublicKey
 } = pkg;
 
-import { writable } from 'svelte/store';
-
 const DEFAULT_RELAYS = [
-    //'ws://localhost:10547',
-    'wss://relay.damus.io',
-    'wss://nostr.mom',
-    'wss://nostr.bitcoiner.social',
+    'ws://localhost:10547',
+    //'wss://relay.damus.io',
+    //'wss://nostr.mom',
+    //'wss://nostr.bitcoiner.social',
 ];
 
 const AD_KIND = 39735;
@@ -28,6 +28,7 @@ const AD_KIND = 39735;
 const REQ_AD_TAGS = [
     'd',
     'lsp_pubkey',
+    // 'lsp_sig',  // activate after lsps adopt ad hardening
     'status',
     'min_required_channel_confirmations',
     'min_funding_confirms_within_blocks',
@@ -102,8 +103,21 @@ export class NostrClientWrapper {
             const eventsArray = [];
             events.forEach((e) => {
                 const adTags = e.tags.toVec().map(tag => tag.kind());
-                const adTagsVerified = adTags.every(tag => REQ_AD_TAGS.includes(tag))
-                const lspPubkey = e.tags.find('lsp_pubkey').content()
+                // can use this after lsps harden ads
+                // const adTagsVerified = adTags.every(tag => REQ_AD_TAGS.includes(tag))
+                // instead just make sure all the specified tags above are in
+                // the ad tags
+                const adTagsVerified = REQ_AD_TAGS.every(requiredTag =>
+                  adTags.includes(requiredTag)
+                );
+                // make sure there's an associated pubkey
+                const lspPubkey = e.tags.find('lsp_pubkey').content();
+                //// add these lines after lsps adopt hardened ads
+                // verify the lsp pubkey and lsp_sig
+                //const lspSig = e.tags.find('lsp_sig').content();
+                //const nostrPubkey = e.author.toHex();
+                //const adIsAuthentic = verifyMessage(lspSig, nostrPubkey, lspPubkey);
+                //if (adTagsVerified && lspPubkey && adIsAuthentic) {
                 if (adTagsVerified && lspPubkey) {
                     // 1) does ad have every required tag?
                     // 2) drop ads with no lsp pubkey
