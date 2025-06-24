@@ -64,7 +64,16 @@ export class MarketplaceClient {
                 if (eventObj.tags && Array.isArray(eventObj.tags)) {
                     for (const tag of eventObj.tags) {
                         if (Array.isArray(tag) && tag.length >= 2) {
-                            tagMap.set(tag[0], tag[1]);
+                            let tagVal = tag[1];
+
+                            if (typeof tagVal === 'string') {
+                                if (tagVal.toLowerCase() === 'true') {
+                                    tagVal = true;
+                                } else if (tagVal.toLowerCase() === 'false') {
+                                    tagVal = false;
+                                }
+                            }
+                            tagMap.set(tag[0], tagVal);
                         }
                     }
                 }
@@ -77,6 +86,7 @@ export class MarketplaceClient {
         const ad = {
             d: tagMap.get('d'),
             lsp_pubkey: tagMap.get('lsp_pubkey'),
+            supports_private_channels: tagMap.get('supports_private_channels'),
             fixed_cost_sats: parseInt(tagMap.get('fixed_cost_sats') || '0'),
             variable_cost_ppm: parseInt(tagMap.get('variable_cost_ppm') || '0'),
             min_initial_client_balance_sat: parseInt(tagMap.get('min_initial_client_balance_sat') || '0'),

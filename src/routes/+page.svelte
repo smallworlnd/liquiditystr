@@ -547,6 +547,8 @@
 				return ad.num_channels || 0;
 			case 'total_capacity':
 				return ad.total_capacity || 0;
+			case 'supports_private_channels':
+				return ad.supports_private_channels || 0;
 			default:
 				return 0;
 		}
@@ -940,7 +942,7 @@
 								<!-- node info group -->
 								<th colspan="4" class="text-center p-2 border-b border-l border-border/40 font-semibold text-xs text-muted-foreground">
 										<div class="relative">
-                      <span>Node Info</span>
+                      <span>Node Stats</span>
 											<button
 												type="button"
 												on:click={() => toggleAdPopover('header', 'node_info')}
@@ -959,6 +961,25 @@
 												<div class="absolute left-0 top-8 z-50 w-64 bg-background border border-border rounded-lg shadow-lg p-3 text-xs">
 													<p class="font-medium mb-1">Node Info</p>
 													<p class="text-muted-foreground">The LSP's total capacity across all of its channels, along with median inbound and outbound fee rates.</p>
+												</div>
+											{/if}
+										</div>
+								</th>
+
+								<!-- misc info group -->
+								<th colspan="1" class="text-center p-2 border-b border-l border-border/40 font-semibold text-xs text-muted-foreground">
+										<div class="relative">
+                      <span>Misc</span>
+											{#if showAdPopovers['header-misc']}
+												<!-- svelte-ignore a11y-click-events-have-key-events -->
+												<!-- svelte-ignore a11y-no-static-element-interactions -->
+												<div 
+													class="fixed inset-0 z-40" 
+													on:click={() => toggleAdPopover('header', 'misc')}
+												></div>
+												<div class="absolute left-0 top-8 z-50 w-64 bg-background border border-border rounded-lg shadow-lg p-3 text-xs">
+													<p class="font-medium mb-1">Misc Info</p>
+													<p class="text-muted-foreground">Includes .</p>
 												</div>
 											{/if}
 										</div>
@@ -1312,6 +1333,29 @@
 										</button>
 									</div>
 								</th>
+
+								<!-- accepts private channels -->
+								<th class="text-center p-4 border-b border-border font-semibold text-sm min-w-28">
+									<div class="flex items-center justify-center gap-2">
+										<button 
+											on:click={() => sortAds('supports_private_channels')}
+											class="flex items-center gap-1 hover:text-primary transition-colors group">
+											<span class="text-muted-foreground text-xs">Supports Private Channels</span>
+											<div class="flex flex-col h-4 w-3 opacity-60 group-hover:opacity-100">
+												{#if sortColumn === 'supports_private_channels' && sortDirection === 'asc'}
+													<ChevronUp class="h-3 w-3 text-primary" />
+												{:else}
+													<ChevronUp class="h-2 w-3 {sortColumn === 'supports_private_channels' ? 'opacity-30' : 'opacity-40'}" />
+												{/if}
+												{#if sortColumn === 'supports_private_channels' && sortDirection === 'desc'}
+													<ChevronDown class="h-3 w-3 text-primary -mt-1" />
+												{:else}
+													<ChevronDown class="h-2 w-3 {sortColumn === 'supports_private_channels' ? 'opacity-30' : 'opacity-40'} -mt-1" />
+												{/if}
+											</div>
+										</button>
+									</div>
+								</th>
 							</tr>
 						</thead>
 						
@@ -1471,6 +1515,17 @@
 												{formatBigNum(ad.median_inbound_ppm)}
 											{:else}
 												<span class="text-muted-foreground">N/A</span>
+											{/if}
+										</div>
+									</td>
+
+									<!-- private channel support -->
+									<td class="p-4 text-center border-r border-border/40">
+										<div class="font-medium text-sm text-foreground">
+											{#if ad.supports_private_channels !== undefined}
+												{#if ad.supports_private_channels}✅{:else}❌{/if}
+											{:else}
+												<span class="text-muted-foreground">✅</span>
 											{/if}
 										</div>
 									</td>
@@ -1686,6 +1741,7 @@
 								<div class="flex items-center space-x-3 py-3">
 									<button 
 										type="button"
+                    disabled={selectedAdInfo.supports_private_channels == false}
 										id="announce_channel"
 										on:click={() => orderData.announce_channel = !orderData.announce_channel}
 										class="relative inline-flex h-6 w-11 items-center rounded-full transition-colors focus:outline-none focus:ring-2 focus:ring-primary/20 focus:ring-offset-2 bg-gray-200 dark:bg-gray-700"
@@ -1696,7 +1752,11 @@
 										</span>
 									</button>
 									<label for="announce_channel" class="text-sm font-medium">
-										{orderData.announce_channel ? 'Public' : 'Private'}
+                    {#if selectedAdInfo.supports_private_channels == true}
+                      {orderData.announce_channel ? 'Public' : 'Private'}
+                    {:else}
+                      Public Only
+                    {/if}
 									</label>
 								</div>
 							</div>
